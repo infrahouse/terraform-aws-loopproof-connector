@@ -62,7 +62,11 @@ probe roles `loopproof-pytest-probe` (matches the trust) and `outsider-pytest-pr
 | `tests/test_registration.py` | POST against a local server on 127.0.0.1, refused registration, token not printed |
 | `tests/test_validation.py` | Variable validation (plans `test_data/validation`, creates nothing) |
 
-Tests write `terraform.tf` and `terraform.tfvars` into the `test_data` roots; both are gitignored.
+`test_rotation.py` takes about 20 minutes on purpose. After a trust policy change, STS refuses a newly added
+ExternalId now and then for a few minutes (a value listed before and after is never refused), so each step waits
+until its change has held for `SETTLE_SECONDS` without a refusal. Don't shorten it to the first success.
+
+Tests write `terraform.tf` and `terraform.tfvars.json` into the `test_data` roots; both are gitignored.
 `tests/data/findings-imported-v2.json` is the sample event.
 
 ## Version Management

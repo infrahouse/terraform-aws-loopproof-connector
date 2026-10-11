@@ -55,11 +55,12 @@ external_ids = [
 ]
 ```
 
-2. Tell LoopProof to switch to the new value.
+2. Wait at least 10 minutes, then tell LoopProof to switch to the new value.
 
 ```hcl
 # 3. The new value only.
 external_ids = [data.aws_ssm_parameter.loopproof_external_id_new.value]
 ```
 
-Neither apply replaces the role: Terraform updates its trust policy in place.
+Neither apply replaces the role: Terraform updates its trust policy in place. The wait in step 2 is for IAM: for a
+few minutes after the first apply, STS still refuses the new value now and then.
