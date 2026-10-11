@@ -36,6 +36,8 @@ CONNECTOR_ROOT = osp.join(TERRAFORM_ROOT_DIR, "connector")
 VALIDATION_ROOT = osp.join(TERRAFORM_ROOT_DIR, "validation")
 
 TEST_ENVIRONMENT = "pytest"
+# JSON, which Terraform loads by itself and `terraform fmt` leaves alone.
+TFVARS_FILE = "terraform.tfvars.json"
 REGISTRATION_PATH = "/connector/registrations"
 SAMPLE_EVENT_PATH = osp.join(osp.dirname(__file__), "data", "findings-imported-v2.json")
 
@@ -102,14 +104,14 @@ def write_terraform_tf(root: str, aws_provider_version: str) -> None:
 
 def write_tfvars(root: str, values: Dict[str, Any]) -> None:
     """
-    Write ``terraform.tfvars`` for a test root module. JSON values are valid HCL.
+    Write the variables file of a test root module.
 
     :param root: Path to the Terraform root module.
     :param values: Variable names and values; ``None`` becomes ``null``.
     """
-    with open(osp.join(root, "terraform.tfvars"), "w", encoding="utf-8") as fp:
-        for name, value in values.items():
-            fp.write(f"{name} = {json.dumps(value)}\n")
+    with open(osp.join(root, TFVARS_FILE), "w", encoding="utf-8") as fp:
+        json.dump(values, fp, indent=2)
+        fp.write("\n")
 
 
 def connector_tfvars(
@@ -192,7 +194,7 @@ def connector_applied(
     """
     Plan and apply a root module, capturing the output, and destroy it afterwards.
 
-    :param root: Path to the Terraform root module, with ``terraform.tfvars`` written.
+    :param root: Path to the Terraform root module, with its variables file written.
     :param destroy_after: Destroy the resources when the context exits.
     :return: The outputs and everything plan and apply printed.
     """
@@ -259,6 +261,53 @@ def wait_for(
         LOG.info("Waiting until %s; checking again in %ds", description, delay)
         time.sleep(delay)
         delay = min(delay * 2, 30)
+
+
+def wait_until_settled(
+    check: Callable[[], bool],
+    description: str,
+    settle_seconds: int,
+    timeout: int,
+    interval: int = 5,
+) -> None:
+    """
+    Poll until a check has passed on every poll for ``settle_seconds`` in a row.
+
+    Right after a trust policy change, some STS hosts keep using the previous policy for minutes,
+    so a single success doesn't mean the change is in effect everywhere. A failed poll restarts
+    the count.
+
+    :param check: Returns True when the awaited state holds. It may raise to fail at once.
+    :param description: What is awaited, for the log and the error.
+    :param settle_seconds: How long the check must keep passing.
+    :param timeout: Seconds to wait in total before giving up.
+    :param interval: Seconds between polls.
+    :raise AssertionError: If the check doesn't settle within the timeout.
+    """
+    deadline = time.time() + timeout
+    passing_since: Optional[float] = None
+    while True:
+        now = time.time()
+        if check():
+            if passing_since is None:
+                LOG.info(
+                    "Now %s; waiting %ds for it to settle", description, settle_seconds
+                )
+                passing_since = now
+            if now - passing_since >= settle_seconds:
+                return
+        elif passing_since is not None:
+            LOG.info(
+                "No longer %s after %ds; starting over",
+                description,
+                now - passing_since,
+            )
+            passing_since = None
+        if now + interval > deadline:
+            raise AssertionError(
+                f"Timed out after {timeout}s waiting until {description} for {settle_seconds}s"
+            )
+        time.sleep(interval)
 
 
 class ConnectorProbe:

@@ -79,7 +79,8 @@ def test_install(connector, iam_client, events_client, aws_region):
     assert outputs["event_rule_arn"] == (
         f"arn:aws:events:{aws_region}:{account_id}:rule/loopproof-{TEST_ENVIRONMENT}-findings"
     )
-    assert outputs["registered"] is None
+    # Terraform leaves null outputs out of `terraform output -json`.
+    assert outputs.get("registered") is None
 
     role = iam_client.get_role(RoleName=outputs["role_name"])["Role"]
     tags = {tag["Key"]: tag["Value"] for tag in role.get("Tags", [])}
@@ -121,7 +122,7 @@ def test_external_id_not_exposed(connector, iam_client, events_client):
 def test_no_token_makes_no_request(connector):
     """Without a registration token, the module doesn't call LoopProof."""
     assert connector["server"].requests == []
-    assert connector["outputs"]["registered"] is None
+    assert connector["outputs"].get("registered") is None
 
 
 def test_trust(connector, boto3_session, aws_region, iam_client):

@@ -69,7 +69,7 @@ clean: ## Clean the repo from cruft
 	rm -rf .pytest_cache site
 	find . -name '.terraform' -exec rm -fr {} +
 	find . -name __pycache__ -exec rm -fr {} +
-	rm -f test_data/*/terraform.tf test_data/*/terraform.tfvars test_data/*/tfplan
+	rm -f test_data/*/terraform.tf test_data/*/terraform.tfvars.json test_data/*/tfplan
 
 .PHONY: fmt
 fmt: format
