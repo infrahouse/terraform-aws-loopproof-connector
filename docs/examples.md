@@ -9,7 +9,7 @@ data "aws_ssm_parameter" "loopproof_external_id" {
 
 module "loopproof_connector" {
   source  = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
-  version = "0.0.0"
+  version = "0.1.0"
 
   environment              = "production"
   control_plane_account_id = "123456789012"
