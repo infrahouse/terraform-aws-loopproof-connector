@@ -1,0 +1,63 @@
+---
+name: 'Terraform-CI'
+
+on:  # yamllint disable-line rule:truthy
+  pull_request:
+
+permissions:
+  id-token: write  # This is required for requesting the JWT
+  contents: read
+
+concurrency:
+  group: aws-control
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    name: 'Terraform Test'
+    runs-on: ["self-hosted", "Linux", "noble"]
+    timeout-minutes: 240  # four hours
+    env:
+      ROLE_ARN: "arn:aws:iam::303467602807:role/loopproof-connector-tester"
+
+    # Use the Bash shell regardless whether the GitHub Actions runner
+    # is ubuntu-latest, macos-latest, or windows-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # Checkout the repository to the GitHub Actions runner
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: "${{ github.event.repository.name }}-${{ github.run_id }}"
+          aws-region: "us-west-1"
+          role-duration-seconds: 43200  # twelve hours
+
+      # Install the latest version of Terraform CLI
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      # Prepare Python environment
+      - name: Setup Python Environment
+        run: make bootstrap
+
+      # `make lint` also runs yamllint on the github-control managed workflows, which don't pass it yet
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      # Integration tests; resources are destroyed at the end
+      - name: Terraform Tests
+        run: make test
