@@ -14,6 +14,7 @@ export PRINT_HELP_PYSCRIPT
 TEST_REGION ?= us-west-2
 TEST_ROLE ?= arn:aws:iam::303467602807:role/loopproof-connector-tester
 TEST_SELECTOR ?= aws-6
+TEST_PATH ?= tests/
 
 help: install-hooks
 	@python -c "$$PRINT_HELP_PYSCRIPT" < Makefile
@@ -35,27 +36,27 @@ test:  ## Run tests on the module
 		tests/
 
 .PHONY: test-keep
-test-keep:  ## Run a test and keep resources
+test-keep:  ## Run tests and keep resources (use TEST_PATH and TEST_SELECTOR to narrow)
 	pytest -xvvs \
 		--aws-region=${TEST_REGION} \
 		--test-role-arn=${TEST_ROLE} \
-		-k $(TEST_SELECTOR) \
+		-k "$(TEST_SELECTOR)" \
 		--keep-after \
-		tests/test_module.py 2>&1 | tee pytest-$(shell date +%Y%m%d-%H%M%S)-output.log
+		$(TEST_PATH) 2>&1 | tee pytest-$(shell date +%Y%m%d-%H%M%S)-output.log
 
 .PHONY: test-clean
-test-clean:  ## Run a test and destroy resources
+test-clean:  ## Run tests and destroy resources (use TEST_PATH and TEST_SELECTOR to narrow)
 	pytest -xvvs \
 		--aws-region=${TEST_REGION} \
 		--test-role-arn=${TEST_ROLE} \
-		-k $(TEST_SELECTOR) \
-		tests/test_module.py 2>&1 | tee pytest-$(shell date +%Y%m%d-%H%M%S)-output.log
+		-k "$(TEST_SELECTOR)" \
+		$(TEST_PATH) 2>&1 | tee pytest-$(shell date +%Y%m%d-%H%M%S)-output.log
 
 .PHONY: lint
 lint:  ## Check code style
-	yamllint \
-		.github/workflows
+	yamllint .github/workflows
 	terraform fmt -check -recursive
+	black --check tests
 
 .PHONY: bootstrap
 bootstrap: install-hooks ## Bootstrap the development environment
@@ -65,8 +66,10 @@ bootstrap: install-hooks ## Bootstrap the development environment
 
 .PHONY: clean
 clean: ## Clean the repo from cruft
-	rm -rf .pytest_cache
+	rm -rf .pytest_cache site
 	find . -name '.terraform' -exec rm -fr {} +
+	find . -name __pycache__ -exec rm -fr {} +
+	rm -f test_data/*/terraform.tf test_data/*/terraform.tfvars test_data/*/tfplan
 
 .PHONY: fmt
 fmt: format

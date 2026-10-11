@@ -1,0 +1,14 @@
+soft-fail: false
+framework:
+  - terraform
+skip-check:
+  # securityhub:GetFindings and securityhub:BatchUpdateFindings take "*": the hub and hubv2 resource types
+  # are optional in the Service Authorization Reference, and AWS doesn't document which ARN the V2 APIs
+  # are authorized against. Deny statements on OCSFSyntaxPath confine BatchUpdateFindings to status and
+  # comment.
+  - CKV_AWS_111
+  - CKV_AWS_356
+skip-path:
+  - .terraform
+  - test_data
+  - examples

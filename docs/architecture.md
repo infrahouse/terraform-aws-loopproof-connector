@@ -1,0 +1,93 @@
+# Architecture
+
+```mermaid
+flowchart LR
+    subgraph tenant["Your account, Security Hub's home Region"]
+        SH["Security Hub"]
+        DB["Default event bus"]
+        RULE["Rule loopproof-&lt;env&gt;-findings"]
+        FWD["Role loopproof-&lt;env&gt;-forwarder"]
+        CONN["Role loopproof-&lt;env&gt;-connector"]
+        SH -- "Findings Imported V2" --> DB --> RULE
+        RULE -. assumes .-> FWD
+    end
+    subgraph cp["LoopProof control plane (us-west-1)"]
+        BUS["LoopProof event bus"]
+        CPR["Roles loopproof-&lt;env&gt;-*"]
+        API["Registration API"]
+    end
+    RULE -- "events:PutEvents" --> BUS
+    CPR -- "sts:AssumeRole + ExternalId" --> CONN
+    CONN -- "GetFindingsV2, BatchUpdateFindingsV2" --> SH
+    CONN -. "role ARN, once" .-> API
+```
+
+## The connector role
+
+`loopproof-<environment>-connector` trusts the control-plane account (`arn:aws:iam::<account>:root`) under two
+conditions:
+
+* `ArnLike aws:PrincipalArn` `arn:aws:iam::<account>:role/loopproof-<environment>-*`: only LoopProof's own roles
+  for that environment;
+* `StringEquals sts:ExternalId` over `external_ids`: one value, or two during a rotation.
+
+Its inline policy `security-hub-findings`:
+
+| Statement | Effect | Action | Why |
+|-----------|--------|--------|-----|
+| `ReadFindings` | Allow | `securityhub:GetFindings` | Authorizes `GetFindingsV2` |
+| `UpdateFindings` | Allow | `securityhub:BatchUpdateFindings` | Authorizes `BatchUpdateFindingsV2` |
+| `DenySeverityUpdates` | Deny | same | If the request sets `SeverityId` |
+| `DenyUpdatesWithoutStatusOrComment` | Deny | same | If it sets no `StatusId` and no `Comment` |
+
+The Security Hub v2 APIs have no IAM actions of their own: `GetFindingsV2` uses `securityhub:GetFindings`, and
+`BatchUpdateFindingsV2` uses `securityhub:BatchUpdateFindings`
+([Service Authorization Reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_securityhub.html),
+[GetFindingsV2](https://docs.aws.amazon.com/securityhub/1.0/APIReference/API_GetFindingsV2.html),
+[BatchUpdateFindingsV2](https://docs.aws.amazon.com/securityhub/1.0/APIReference/API_BatchUpdateFindingsV2.html)).
+Those actions also authorize the older ASFF APIs. The `securityhub:OCSFSyntaxPath/<field>` condition key lets the
+policy refuse a severity change, and refuse any update that carries no OCSF status or comment, which includes every
+ASFF `BatchUpdateFindings` call.
+
+## Forwarding
+
+The rule `loopproof-<environment>-findings`, on the default bus, matches:
+
+```json
+{
+  "source": ["aws.securityhub"],
+  "detail-type": ["Findings Imported V2"],
+  "detail": {"findings": {"severity_id": [4, 5, 6]}}
+}
+```
+
+Security Hub sends one finding per event, at `detail.findings[0]`, in OCSF
+([event format](https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-v2-cwe-event-formats.html)).
+The rule matches the OCSF `severity_id`, which OCSF requires, rather than the `severity` caption, which for
+`Other` (99) the source defines ([OCSF](https://schema.ocsf.io/1.6.0/classes/detection_finding)). The `severities`
+input takes the captions and the module maps them:
+
+| `severities` value | `severity_id` |
+|--------------------|---------------|
+| Unknown | 0 |
+| Informational | 1 |
+| Low | 2 |
+| Medium | 3 |
+| High | 4 |
+| Critical | 5 |
+| Fatal | 6 |
+| Other | 99 |
+
+The rule doesn't filter on the activity: new (`Create`), updated and closed findings all pass, and the control plane
+drops the echoes of its own updates. Security Hub CSPM events share the `aws.securityhub` source but use another
+detail-type, so they don't match.
+
+The target is LoopProof's bus, in another account and usually another Region. EventBridge requires a role for such a
+target; `loopproof-<environment>-forwarder` trusts `events.amazonaws.com` for this rule only (`aws:SourceArn`,
+`aws:SourceAccount`) and may only `events:PutEvents` on that bus.
+
+## Registration
+
+With `registration_token` set, an `http` data source POSTs `{"role_arn": "<role arn>"}` to `registration_url`,
+with `Authorization: Bearer <token>`, after the role and its policy exist. A postcondition fails the run on any answer
+but `200`. See [Security](security.md#the-registration-token) for what Terraform prints and stores.
