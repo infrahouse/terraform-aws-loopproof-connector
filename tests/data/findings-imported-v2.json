@@ -1,0 +1,76 @@
+{
+  "version": "0",
+  "id": "6f1b7c3e-2a51-4f0b-9d3e-8c2d1f0a4b5c",
+  "detail-type": "Findings Imported V2",
+  "source": "aws.securityhub",
+  "account": "111122223333",
+  "time": "2026-10-11T16:20:31Z",
+  "region": "us-east-1",
+  "resources": [
+    "e51603d1054aad9d9f498d82d6e81acf4cf6bc88140e8ad2273123c73b81084"
+  ],
+  "detail": {
+    "findings": [
+      {
+        "activity_id": 1,
+        "activity_name": "Create",
+        "category_name": "Findings",
+        "category_uid": 2,
+        "class_name": "Detection Finding",
+        "class_uid": 2004,
+        "cloud": {
+          "account": {
+            "type": "AWS Account",
+            "type_id": 10,
+            "uid": "444455556666"
+          },
+          "provider": "AWS",
+          "region": "us-east-1"
+        },
+        "finding_info": {
+          "created_time_dt": "2026-10-11T16:19:58.000Z",
+          "desc": "EC2 instance i-0abcd1234ef567890 is querying a domain name associated with a known Bitcoin-related domain.",
+          "first_seen_time_dt": "2026-10-11T16:19:58.000Z",
+          "title": "The EC2 instance i-0abcd1234ef567890 is querying a domain name associated with Bitcoin activity.",
+          "types": [
+            "CryptoCurrency:EC2/BitcoinTool.B!DNS"
+          ],
+          "uid": "arn:aws:guardduty:us-east-1:444455556666:detector/12abc34d567e8fa901bc2d34e56789f0/finding/5ac9b1e6d0f74c2b8f1e3a7d9c0b2e4f"
+        },
+        "metadata": {
+          "product": {
+            "name": "GuardDuty",
+            "uid": "arn:aws:securityhub:us-east-1::productv2/aws/guardduty",
+            "vendor_name": "AWS"
+          },
+          "profiles": [
+            "cloud",
+            "datetime"
+          ],
+          "uid": "arn:aws:securityhub:us-east-1:444455556666:security-control/GuardDuty/finding/5ac9b1e6d0f74c2b8f1e3a7d9c0b2e4f",
+          "version": "1.6.0"
+        },
+        "resources": [
+          {
+            "cloud_partition": "aws",
+            "owner": {
+              "account": {
+                "uid": "444455556666"
+              }
+            },
+            "region": "us-east-1",
+            "type": "AWS::EC2::Instance",
+            "uid": "arn:aws:ec2:us-east-1:444455556666:instance/i-0abcd1234ef567890"
+          }
+        ],
+        "severity": "High",
+        "severity_id": 4,
+        "status": "New",
+        "status_id": 1,
+        "time_dt": "2026-10-11T16:19:58.000Z",
+        "type_name": "Detection Finding: Create",
+        "type_uid": 200401
+      }
+    ]
+  }
+}

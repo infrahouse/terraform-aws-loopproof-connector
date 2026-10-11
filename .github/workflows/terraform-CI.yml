@@ -54,9 +54,9 @@ jobs:
       - name: Setup Python Environment
         run: make bootstrap
 
-      # `make lint` also runs yamllint on the github-control managed workflows, which don't pass it yet
-      - name: Terraform Format Check
-        run: terraform fmt -check -recursive
+      # yamllint, terraform fmt and black, in check mode
+      - name: Code Style Check
+        run: make lint
 
       # Integration tests; resources are destroyed at the end
       - name: Terraform Tests

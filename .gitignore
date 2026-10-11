@@ -10,3 +10,8 @@ pytest-*-output.log
 .terraform.lock.hcl
 terraform.tfstate
 terraform.tfstate.backup
+# Written by the tests
+/test_data/*/terraform.tf
+/test_data/*/terraform.tfvars
+/test_data/*/tfplan
+/site/
