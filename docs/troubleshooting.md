@@ -39,7 +39,9 @@ the token.
   LoopProof has switched.
 * `environment` or `control_plane_account_id` doesn't match LoopProof's environment. The trust policy only accepts
   the roles `loopproof-<environment>-*` of that account.
-* IAM takes up to a minute or two to apply a new trust policy. Retry after that.
+* IAM applies a trust policy change gradually: for a few minutes after an apply, STS may refuse a newly added
+  ExternalId now and then. A value that was already listed keeps working. Wait about 10 minutes before LoopProof
+  switches to a new value.
 
 ## No Findings Imported V2 events at all
 

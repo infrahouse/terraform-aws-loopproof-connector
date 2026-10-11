@@ -38,11 +38,18 @@ Keep it in your own parameter store and pass it in; never commit it. Two places 
 ## Rotating the ExternalId
 
 1. Apply with both values, `[old, new]`. The old one keeps working throughout.
-2. Tell LoopProof to switch; it presents the new one from then on.
+2. Wait at least 10 minutes, then tell LoopProof to switch; it presents the new one from then on.
 3. Apply with the new one only, `[new]`.
 
-Each apply updates the trust policy in place. IAM takes a little while to apply the change, which is why the old value
-stays listed until LoopProof has switched.
+Each apply updates the trust policy in place; the role isn't replaced. IAM applies the change gradually: in the
+module's tests, STS refused a newly added ExternalId now and then for up to about four minutes after the apply, while
+the value listed before and after the change was never refused. Hence the wait in step 2, and the old value stays
+listed until LoopProof has switched. The tests also hold each step until the change has been in effect for five
+minutes without a refusal.
+
+The same lag applies the other way: after step 3, STS still accepts the removed value now and then for a few
+minutes. If an ExternalId leaked, count on it being revoked only once that has passed, and remember that it is only
+half of the access: the caller must also be one of LoopProof's control-plane roles.
 
 ## The registration token
 

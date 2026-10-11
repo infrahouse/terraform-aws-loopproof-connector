@@ -102,8 +102,12 @@ policy as `(sensitive value)`. Like every input, it is stored in the Terraform s
 ### Rotating the ExternalId
 
 1. Apply with both values: `external_ids = [old, new]`. LoopProof's calls keep working with the old one.
-2. Tell LoopProof to switch; it now presents the new one.
+2. Wait at least 10 minutes, then tell LoopProof to switch; it now presents the new one.
 3. Apply with the new one only: `external_ids = [new]`.
+
+IAM applies a trust policy change gradually. For a few minutes after step 1, some STS requests still see the old
+policy and refuse the new value, while the old value keeps working throughout. That's why step 2 waits, and why the
+old value stays listed until LoopProof has switched.
 
 ### Registration
 
