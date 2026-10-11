@@ -161,8 +161,8 @@ Full documentation is at [infrahouse.github.io/terraform-aws-loopproof-connector
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.68.0 |
-| <a name="provider_http"></a> [http](#provider\_http) | 3.6.2 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.0 |
+| <a name="provider_http"></a> [http](#provider\_http) | ~> 3.5 |
 
 ## Modules
 
