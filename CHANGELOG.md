@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-10-16
+
+### Features
+
+- Report the Region in the connector registration
+
 ## [0.1.0] - 2026-10-11
 
 ### Bug Fixes
