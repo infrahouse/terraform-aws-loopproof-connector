@@ -1,6 +1,16 @@
 output "role_arn" {
-  description = "ARN of the connector role. Paste it into LoopProof's onboarding if the registration call failed."
+  description = <<-EOT
+    ARN of the connector role. Paste it into LoopProof's onboarding, with region, if the registration call failed.
+  EOT
   value       = aws_iam_role.connector.arn
+}
+
+output "region" {
+  description = <<-EOT
+    Region the module is applied in, where LoopProof reads the Security Hub findings. Paste it into LoopProof's
+    onboarding with role_arn if the registration call failed.
+  EOT
+  value       = local.region
 }
 
 output "role_name" {

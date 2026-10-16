@@ -1,6 +1,11 @@
 output "role_arn" {
-  description = "Paste this into LoopProof's onboarding if the registration call failed."
+  description = "Paste this into LoopProof's onboarding, with region, if the registration call failed."
   value       = module.loopproof_connector.role_arn
+}
+
+output "region" {
+  description = "Paste this into LoopProof's onboarding with role_arn if the registration call failed."
+  value       = module.loopproof_connector.region
 }
 
 output "registered" {

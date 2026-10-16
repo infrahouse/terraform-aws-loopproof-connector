@@ -79,6 +79,8 @@ def test_install(connector, iam_client, events_client, aws_region):
     assert outputs["event_rule_arn"] == (
         f"arn:aws:events:{aws_region}:{account_id}:rule/loopproof-{TEST_ENVIRONMENT}-findings"
     )
+    # The tenant's Region, not the control plane's bus Region.
+    assert outputs["region"] == aws_region
     # Terraform leaves null outputs out of `terraform output -json`.
     assert outputs.get("registered") is None
 

@@ -27,7 +27,9 @@ from tests.conftest import (
 def test_registration(
     aws_provider_version, aws_region, test_role_arn, keep_after, registration_server
 ):
-    """One POST with the token and the role ARN; the token shows in no plan or apply output."""
+    """
+    One POST with the token, the role ARN and the tenant's Region; the token shows in no plan or apply output.
+    """
     token = new_registration_token()
     external_id = new_external_id()
     write_terraform_tf(CONNECTOR_ROOT, aws_provider_version)
@@ -48,7 +50,12 @@ def test_registration(
         assert request["path"] == REGISTRATION_PATH
         assert request["headers"]["Authorization"] == f"Bearer {token}"
         assert request["headers"]["Content-Type"] == "application/json"
-        assert json.loads(request["body"]) == {"role_arn": outputs["role_arn"]}
+        # The Region is the tenant's provider's, where LoopProof reads Security Hub, not the bus's.
+        assert json.loads(request["body"]) == {
+            "role_arn": outputs["role_arn"],
+            "region": aws_region,
+        }
+        assert outputs["region"] == aws_region
         assert outputs["registered"] is True
 
         assert token not in log
@@ -68,7 +75,7 @@ def test_registration(
 def test_registration_refused(
     aws_provider_version, aws_region, test_role_arn, keep_after, registration_server
 ):
-    """Any answer but 200 fails the apply, and the error tells the tenant to paste the role ARN."""
+    """Any answer but 200 fails the apply, and the error tells the tenant to paste the role ARN and the Region."""
     token = new_registration_token()
     external_id = new_external_id()
     registration_server.status = 401
@@ -93,10 +100,11 @@ def test_registration_refused(
             "LoopProof did not accept the connector registration (HTTP 401)." in message
         )
         assert (
-            "Paste the connector role ARN into LoopProof's onboarding instead:"
+            "Paste the connector role ARN and the Region into LoopProof's onboarding instead:"
             in message
         )
         assert f":role/loopproof-{TEST_ENVIRONMENT}-connector" in message
+        assert f"Region: {aws_region}" in message
         assert (
             "remove registration_token from the module call and apply again" in message
         )

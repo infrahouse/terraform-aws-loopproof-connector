@@ -80,7 +80,8 @@ variable "registration_url" {
   type        = string
   description = <<-EOT
     LoopProof's connector registration endpoint, such as
-    https://api.staging.loopproof.ai/connector/registrations. It must use https://;
+    https://api.staging.loopproof.ai/connector/registrations. The module POSTs the connector
+    role's ARN and the Region it is applied in there. It must use https://;
     http:// is accepted only for 127.0.0.1 and localhost, for tests.
   EOT
 
@@ -102,7 +103,8 @@ variable "registration_token" {
   default     = null
   description = <<-EOT
     One-time registration token (lprt_...) from LoopProof's onboarding, valid for 24 hours.
-    When set, the module reports the connector role's ARN to registration_url.
+    When set, the module reports the connector role's ARN and the Region it is applied in to
+    registration_url: LoopProof reads Security Hub's findings in that Region, which an ARN doesn't name.
     Set it for the first apply and remove it afterwards. When null, the module makes no call.
   EOT
 

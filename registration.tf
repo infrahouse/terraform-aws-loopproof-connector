@@ -1,4 +1,8 @@
-# Self-registration: report the connector role's ARN to LoopProof with the one-time token.
+# Self-registration: report the connector role's ARN and the Region to LoopProof with the one-time token.
+#
+# LoopProof reads the tenant's Security Hub findings in the Region where the tenant applied this module,
+# which onboarding tells them is Security Hub's home Region. An IAM role ARN carries no Region, so the
+# call reports the provider's Region beside it; LoopProof can't learn it otherwise.
 #
 # The http data source needs no binary on the tenant's machine. Like any data source, it is read on
 # every plan once its inputs are known, so while registration_token is set each plan POSTs again.
@@ -14,7 +18,10 @@ data "http" "registration" {
     Authorization = "Bearer ${var.registration_token}"
     Content-Type  = "application/json"
   }
-  request_body       = jsonencode({ role_arn = aws_iam_role.connector.arn })
+  request_body = jsonencode({
+    role_arn = aws_iam_role.connector.arn
+    region   = local.region
+  })
   request_timeout_ms = 30000
 
   # LoopProof may assume the role as soon as it learns the ARN, so register it with its permissions.
@@ -25,8 +32,9 @@ data "http" "registration" {
       condition     = self.status_code == 200
       error_message = <<-EOT
         LoopProof did not accept the connector registration (HTTP ${self.status_code}).
-        Paste the connector role ARN into LoopProof's onboarding instead:
-        ${aws_iam_role.connector.arn}
+        Paste the connector role ARN and the Region into LoopProof's onboarding instead:
+        Role ARN: ${aws_iam_role.connector.arn}
+        Region: ${local.region}
         Then remove registration_token from the module call and apply again.
       EOT
     }

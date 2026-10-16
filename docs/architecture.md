@@ -19,7 +19,7 @@ flowchart LR
     RULE -- "events:PutEvents" --> BUS
     CPR -- "sts:AssumeRole + ExternalId" --> CONN
     CONN -- "GetFindingsV2, BatchUpdateFindingsV2" --> SH
-    CONN -. "role ARN, once" .-> API
+    CONN -. "role ARN and Region, once" .-> API
 ```
 
 ## The connector role
@@ -88,6 +88,11 @@ target; `loopproof-<environment>-forwarder` trusts `events.amazonaws.com` for th
 
 ## Registration
 
-With `registration_token` set, an `http` data source POSTs `{"role_arn": "<role arn>"}` to `registration_url`,
-with `Authorization: Bearer <token>`, after the role and its policy exist. A postcondition fails the run on any answer
-but `200`. See [Security](security.md#the-registration-token) for what Terraform prints and stores.
+With `registration_token` set, an `http` data source POSTs `{"role_arn": "<role arn>", "region": "<region>"}` to
+`registration_url`, with `Authorization: Bearer <token>`, after the role and its policy exist. A postcondition fails
+the run on any answer but `200`. See [Security](security.md#the-registration-token) for what Terraform prints and
+stores.
+
+`region` is the AWS provider's Region, such as `us-east-1`: the Region the module is applied in, which should be
+Security Hub's home Region. LoopProof reads the findings there. An IAM role ARN carries no Region, so LoopProof can't
+learn it otherwise.

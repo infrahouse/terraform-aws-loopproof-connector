@@ -20,14 +20,17 @@ It creates:
   `securityhub:OCSFSyntaxPath/*` to status and comment;
 - `loopproof-<environment>-findings`: an EventBridge rule for "Findings Imported V2" events by OCSF `severity_id`,
   targeting `event_bus_arn` through `loopproof-<environment>-forwarder`, which may only `events:PutEvents` there;
-- with `registration_token` set, an `http` data source that POSTs the role ARN to `registration_url`.
+- with `registration_token` set, an `http` data source that POSTs `{"role_arn": ..., "region": ...}` to
+  `registration_url`. `region` is the AWS provider's Region, where the tenant applies the module: LoopProof reads the
+  tenant's Security Hub there, and an IAM ARN carries no Region.
 
 ### Interface contract
 
 LoopProof's onboarding generates the module call, so the variable names (`environment`,
 `control_plane_account_id`, `external_ids`, `event_bus_arn`, `registration_url`, `registration_token`,
-`severities`) and outputs (`role_arn`, `role_name`, `event_rule_arn`, `registered`) are a contract. Don't rename
-them without a major version.
+`severities`) and outputs (`role_arn`, `region`, `role_name`, `event_rule_arn`, `registered`) are a contract. Don't
+rename them without a major version. So are the registration request body's fields, `role_arn` and `region`, which
+LoopProof's `POST /connector/registrations` reads.
 
 ### Credentials
 

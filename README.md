@@ -16,7 +16,7 @@ the access it needs in your account, and nothing more:
   their status and comment;
 * an EventBridge rule that forwards Security Hub's "Findings Imported V2" events of the severities you choose to
   LoopProof's event bus;
-* a one-time call that reports the role's ARN to LoopProof, so onboarding needs no copy and paste.
+* a one-time call that reports the role's ARN and the Region to LoopProof, so onboarding needs no copy and paste.
 
 ## Why This Module?
 
@@ -111,15 +111,21 @@ old value stays listed until LoopProof has switched.
 
 ### Registration
 
-With `registration_token` set, the module POSTs the role's ARN to `registration_url` once the role exists, with
-`Authorization: Bearer <token>`. The token comes from LoopProof's onboarding and is valid for 24 hours.
+With `registration_token` set, the module POSTs the role's ARN and the Region it's applied in to `registration_url`
+once the role exists, with `Authorization: Bearer <token>`. The token comes from LoopProof's onboarding and is valid
+for 24 hours.
+
+LoopProof reads your Security Hub findings in that Region, the AWS provider's Region where you apply the module:
+Security Hub's home Region, if you install it [where it belongs](#where-to-install-it). An IAM role ARN names no
+Region, so LoopProof can't learn it from the ARN.
 
 * Set it for the first apply, then remove it. When it's `null`, the module makes no call.
 * The call is a data source, so Terraform makes it on **every** plan while the token is set, including the plan of
   a `destroy`. LoopProof answers `200` to a repeat of the same token with the same ARN, so that is harmless, but a
   token LoopProof no longer accepts will fail the plan.
-* Any answer but `200` fails the apply with the role's ARN and a message to paste it into LoopProof instead. The
-  `role_arn` output has it too. The ARN is only a hint: LoopProof proves the account later by assuming the role.
+* Any answer but `200` fails the apply with the role's ARN, the Region and a message to paste them into LoopProof
+  instead. The `role_arn` and `region` outputs have them too. The ARN is only a hint: LoopProof proves the account
+  later by assuming the role.
 
 ### Events are refused until LoopProof proves the account
 
@@ -184,6 +190,7 @@ No modules.
 | [aws_iam_policy_document.forwarder_permissions](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.forwarder_trust](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
+| [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
 | [http_http.registration](https://registry.terraform.io/providers/hashicorp/http/latest/docs/data-sources/http) | data source |
 
 ## Inputs
@@ -194,8 +201,8 @@ No modules.
 | <a name="input_environment"></a> [environment](#input\_environment) | LoopProof's environment, such as staging or production. It names the connector role<br/>(loopproof-<environment>-connector) and selects the control-plane roles allowed to assume it<br/>(loopproof-<environment>-*). | `string` | n/a | yes |
 | <a name="input_event_bus_arn"></a> [event\_bus\_arn](#input\_event\_bus\_arn) | ARN of LoopProof's control-plane EventBridge bus that receives the forwarded findings. | `string` | n/a | yes |
 | <a name="input_external_ids"></a> [external\_ids](#input\_external\_ids) | ExternalIds that LoopProof presents when it assumes the connector role. One value normally,<br/>two during a rotation. LoopProof generates them; feed them from your own parameter store and<br/>never commit them. | `list(string)` | n/a | yes |
-| <a name="input_registration_token"></a> [registration\_token](#input\_registration\_token) | One-time registration token (lprt\_...) from LoopProof's onboarding, valid for 24 hours.<br/>When set, the module reports the connector role's ARN to registration\_url.<br/>Set it for the first apply and remove it afterwards. When null, the module makes no call. | `string` | `null` | no |
-| <a name="input_registration_url"></a> [registration\_url](#input\_registration\_url) | LoopProof's connector registration endpoint, such as<br/>https://api.staging.loopproof.ai/connector/registrations. It must use https://;<br/>http:// is accepted only for 127.0.0.1 and localhost, for tests. | `string` | n/a | yes |
+| <a name="input_registration_token"></a> [registration\_token](#input\_registration\_token) | One-time registration token (lprt\_...) from LoopProof's onboarding, valid for 24 hours.<br/>When set, the module reports the connector role's ARN and the Region it is applied in to<br/>registration\_url: LoopProof reads Security Hub's findings in that Region, which an ARN doesn't name.<br/>Set it for the first apply and remove it afterwards. When null, the module makes no call. | `string` | `null` | no |
+| <a name="input_registration_url"></a> [registration\_url](#input\_registration\_url) | LoopProof's connector registration endpoint, such as<br/>https://api.staging.loopproof.ai/connector/registrations. The module POSTs the connector<br/>role's ARN and the Region it is applied in there. It must use https://;<br/>http:// is accepted only for 127.0.0.1 and localhost, for tests. | `string` | n/a | yes |
 | <a name="input_severities"></a> [severities](#input\_severities) | Severities of the Security Hub findings to forward, as they appear in the OCSF severity field:<br/>Unknown, Informational, Low, Medium, High, Critical, Fatal or Other. | `list(string)` | <pre>[<br/>  "High",<br/>  "Critical",<br/>  "Fatal"<br/>]</pre> | no |
 
 ## Outputs
@@ -203,8 +210,9 @@ No modules.
 | Name | Description |
 |------|-------------|
 | <a name="output_event_rule_arn"></a> [event\_rule\_arn](#output\_event\_rule\_arn) | ARN of the EventBridge rule that forwards Security Hub findings to LoopProof. |
+| <a name="output_region"></a> [region](#output\_region) | Region the module is applied in, where LoopProof reads the Security Hub findings. Paste it into LoopProof's<br/>onboarding with role\_arn if the registration call failed. |
 | <a name="output_registered"></a> [registered](#output\_registered) | true once LoopProof accepted the registration; null when registration\_token is null. |
-| <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | ARN of the connector role. Paste it into LoopProof's onboarding if the registration call failed. |
+| <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | ARN of the connector role. Paste it into LoopProof's onboarding, with region, if the registration call failed. |
 | <a name="output_role_name"></a> [role\_name](#output\_role\_name) | Name of the connector role, loopproof-<environment>-connector. |
 <!-- END_TF_DOCS -->
 

@@ -4,6 +4,8 @@ locals {
 
   partition  = data.aws_partition.current.partition
   account_id = data.aws_caller_identity.current.account_id
+  # The AWS provider's Region, where the tenant applies the module: Security Hub's home Region.
+  region = data.aws_region.current.region
 
   connector_role_name = "loopproof-${var.environment}-connector"
   forwarder_role_name = "loopproof-${var.environment}-forwarder"
