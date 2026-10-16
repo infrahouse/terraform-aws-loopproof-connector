@@ -7,7 +7,8 @@ your Security Hub findings into Linear tickets, and nothing more:
   ExternalId, to read findings and set their status and comment.
 * **Forwarding.** An EventBridge rule sends Security Hub's "Findings Imported V2" events of the severities you
   choose to LoopProof's event bus, through a role that may only put events on that bus.
-* **Self-registration.** On the first apply, the module reports the role's ARN to LoopProof with a one-time token.
+* **Self-registration.** On the first apply, the module reports the role's ARN and the Region to LoopProof with a
+  one-time token.
 
 ## Features
 

@@ -62,7 +62,7 @@ linked Region, and `GetFindingsV2` can read them all.
     ```
 
     The `registered` output is `true` once LoopProof accepted the role. If the call failed, the error shows the
-    role's ARN: paste it into LoopProof's onboarding.
+    role's ARN and the Region: paste them into LoopProof's onboarding.
 
 4. **Apply again without the token.** The module stops calling LoopProof, and `registered` becomes `null`.
 

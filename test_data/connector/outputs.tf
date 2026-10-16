@@ -2,6 +2,10 @@ output "role_arn" {
   value = module.connector.role_arn
 }
 
+output "region" {
+  value = module.connector.region
+}
+
 output "role_name" {
   value = module.connector.role_name
 }

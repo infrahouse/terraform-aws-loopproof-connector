@@ -27,7 +27,8 @@ control-plane account.
 
 ### `registration_url`
 
-LoopProof's registration endpoint, such as `https://api.staging.loopproof.ai/connector/registrations`. It must use
+LoopProof's registration endpoint, such as `https://api.staging.loopproof.ai/connector/registrations`. The module
+POSTs the role's ARN and the Region it's applied in there; see [Registration](#registration). It must use
 `https://`, without credentials in the URL; `http://` is accepted only for `127.0.0.1` and `localhost`, which the
 module's tests use.
 
@@ -50,7 +51,8 @@ severities = ["Medium", "High", "Critical", "Fatal"]
 
 | Output | Description |
 |--------|-------------|
-| `role_arn` | ARN of the connector role. Paste it into LoopProof if the registration call failed. |
+| `role_arn` | ARN of the connector role. Paste it into LoopProof, with `region`, if the registration call failed. |
+| `region` | The module's Region, where LoopProof reads the findings. Paste it with `role_arn` if registration failed. |
 | `role_name` | `loopproof-<environment>-connector` |
 | `event_rule_arn` | ARN of the EventBridge rule |
 | `registered` | `true` once LoopProof accepted the registration, `null` without a token |
@@ -59,8 +61,10 @@ No output contains an ExternalId or the token.
 
 ## Registration
 
-The module reports the role's ARN with the `hashicorp/http` data source, so the machine running Terraform needs no
-`curl` or other binary. Data sources are read on every plan, so while `registration_token` is set:
+The module reports the role's ARN and the AWS provider's Region with the `hashicorp/http` data source, so the machine
+running Terraform needs no `curl` or other binary. LoopProof reads your Security Hub findings in that Region; an IAM
+role ARN names no Region, so the call carries it. Data sources are read on every plan, so while
+`registration_token` is set:
 
 * every `plan`, `apply` and `destroy` POSTs the same request again. LoopProof answers `200` to a repeat of the same
   token with the same ARN, so that's harmless;
@@ -80,13 +84,14 @@ Any answer but `200` fails the run:
 Error: Resource postcondition failed
 
 LoopProof did not accept the connector registration (HTTP 401).
-Paste the connector role ARN into LoopProof's onboarding instead:
-arn:aws:iam::111122223333:role/loopproof-production-connector
+Paste the connector role ARN and the Region into LoopProof's onboarding instead:
+Role ARN: arn:aws:iam::111122223333:role/loopproof-production-connector
+Region: us-east-1
 Then remove registration_token from the module call and apply again.
 ```
 
 The module doesn't retry: a retry that runs out ends with the provider's own error, without that message. A network
-error fails the run with the provider's error; apply again, or paste `role_arn`.
+error fails the run with the provider's error; apply again, or paste `role_arn` and `region`.
 
 ## Tags
 

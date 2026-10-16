@@ -53,8 +53,8 @@ half of the access: the caller must also be one of LoopProof's control-plane rol
 
 ## The registration token
 
-The token (`lprt_…`) is valid for 24 hours and only lets LoopProof learn your role's ARN, which is just a hint:
-LoopProof proves the account by assuming the role. The module:
+The token (`lprt_…`) is valid for 24 hours and only lets LoopProof learn your role's ARN and the Region you applied
+the module in. The ARN is just a hint: LoopProof proves the account by assuming the role. The module:
 
 * marks `registration_token` sensitive; the plan shows the `Authorization` header as `(sensitive value)`, and the
   apply prints only the URL;

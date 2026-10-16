@@ -17,7 +17,8 @@ If the failures continue after LoopProof shows the account as connected, check t
 
 The registration call got an answer other than `200`. The role and the forwarding were still created.
 
-* Paste the role ARN from the error (or `terraform output role_arn`) into LoopProof's onboarding.
+* Paste the role ARN and the Region from the error (or the module's `role_arn` and `region` outputs) into LoopProof's
+  onboarding.
 * Remove `registration_token` from the module call and apply again.
 
 A `401` or `403` usually means the token expired (it's valid for 24 hours) or was already used for another role.
@@ -30,8 +31,8 @@ the token. Remove `registration_token`; the role stays registered.
 ## The apply fails with "Error making request"
 
 The registration call didn't get an answer: DNS, a proxy or a firewall. Apply again once
-`registration_url` is reachable from the machine that runs Terraform, or paste `role_arn` into LoopProof and remove
-the token.
+`registration_url` is reachable from the machine that runs Terraform, or paste `role_arn` and `region` into LoopProof
+and remove the token.
 
 ## LoopProof reports AccessDenied when it assumes the role
 
