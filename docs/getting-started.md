@@ -38,7 +38,7 @@ linked Region, and `GetFindingsV2` can read them all.
 
     module "loopproof_connector" {
       source  = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
-      version = "0.1.0"
+      version = "0.2.0"
 
       environment              = "production"
       control_plane_account_id = "123456789012"
