@@ -21,6 +21,9 @@ module "loopproof_connector" {
   event_bus_arn            = var.event_bus_arn
   registration_url         = var.registration_url
 
+  # Accounts whose findings stay here; the next apply takes a change in.
+  excluded_accounts = var.excluded_accounts
+
   # Set for the first apply only, for example with TF_VAR_registration_token. Then remove it.
   registration_token = var.registration_token
 }

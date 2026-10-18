@@ -43,6 +43,20 @@ module "loopproof_connector" {
 }
 ```
 
+## Exclude accounts
+
+Keep the findings of an account outside your audit scope, or of a decommissioned one, in your account:
+
+```hcl
+module "loopproof_connector" {
+  # ...
+  excluded_accounts = ["111122223333"]
+}
+```
+
+The next apply updates the forwarding rule and the parameter `/loopproof/<environment>/excluded-accounts`, which
+LoopProof reads. Set `excluded_accounts = []`, or remove it, to include the account again.
+
 ## Rotating the ExternalId
 
 Store the new value next to the old one, then:

@@ -1,16 +1,19 @@
 """
-A plain install, without a registration token: the resources, the outputs, the trust policy,
-the connector's permissions and the forwarding rule. The tests share one deployment.
+A plain install, without a registration token or excluded accounts: the resources, the outputs,
+the trust policy, the connector's permissions, the forwarding rule and the excluded accounts'
+parameter. The tests share one deployment.
 """
 
 import json
 import re
-from typing import Any, Dict, Iterator
+from typing import Any, Callable, Dict, Iterator, List
 
 import pytest
+from botocore.exceptions import ClientError
 
 from tests.conftest import (
     CONNECTOR_ROOT,
+    EXCLUDED_ACCOUNTS_PARAMETER,
     MODULE_VERSION,
     OCSF_SEVERITY_IDS,
     TEST_ENVIRONMENT,
@@ -61,11 +64,6 @@ def connector(
             }
 
 
-@pytest.fixture()
-def events_client(boto3_session, aws_region):
-    return boto3_session.client("events", region_name=aws_region)
-
-
 def test_install(connector, iam_client, events_client, aws_region):
     """A plain install creates the role, the rule and the target, and sets the outputs."""
     outputs = connector["outputs"]
@@ -81,6 +79,7 @@ def test_install(connector, iam_client, events_client, aws_region):
     )
     # The tenant's Region, not the control plane's bus Region.
     assert outputs["region"] == aws_region
+    assert outputs["excluded_accounts_parameter"] == EXCLUDED_ACCOUNTS_PARAMETER
     # Terraform leaves null outputs out of `terraform output -json`.
     assert outputs.get("registered") is None
 
@@ -178,19 +177,24 @@ def test_connector_trust_policy(connector, iam_client):
 
 
 def test_connector_permissions(connector, iam_client):
-    """The connector role may only read findings and set their status and comment."""
+    """
+    The connector role may only read findings and set their status and comment, and read the
+    excluded accounts.
+    """
     role_name = connector["outputs"]["role_name"]
 
     assert (
         iam_client.list_attached_role_policies(RoleName=role_name)["AttachedPolicies"]
         == []
     )
-    policy_names = iam_client.list_role_policies(RoleName=role_name)["PolicyNames"]
-    assert len(policy_names) == 1
+    assert sorted(iam_client.list_role_policies(RoleName=role_name)["PolicyNames"]) == [
+        "excluded-accounts-parameter",
+        "security-hub-findings",
+    ]
     statements = policy_statements(
-        iam_client.get_role_policy(RoleName=role_name, PolicyName=policy_names[0])[
-            "PolicyDocument"
-        ]
+        iam_client.get_role_policy(
+            RoleName=role_name, PolicyName="security-hub-findings"
+        )["PolicyDocument"]
     )
     allowed = [statement for statement in statements if statement["Effect"] == "Allow"]
     assert {
@@ -210,6 +214,25 @@ def test_connector_permissions(connector, iam_client):
     assert {
         action for statement in denied for action in as_list(statement["Action"])
     } == {"securityhub:BatchUpdateFindings"}
+
+
+def test_connector_excluded_accounts_policy(connector, iam_client, ssm_client):
+    """The connector role's second policy allows GetParameter on the excluded accounts' parameter alone."""
+    statements = policy_statements(
+        iam_client.get_role_policy(
+            RoleName=connector["outputs"]["role_name"],
+            PolicyName="excluded-accounts-parameter",
+        )["PolicyDocument"]
+    )
+    parameter_arn = ssm_client.get_parameter(Name=EXCLUDED_ACCOUNTS_PARAMETER)[
+        "Parameter"
+    ]["ARN"]
+
+    assert len(statements) == 1
+    assert statements[0]["Effect"] == "Allow"
+    assert as_list(statements[0]["Action"]) == ["ssm:GetParameter"]
+    assert as_list(statements[0]["Resource"]) == [parameter_arn]
+    assert "Condition" not in statements[0]
 
 
 @pytest.mark.parametrize(
@@ -272,6 +295,114 @@ def test_connector_permissions_simulated(
     assert result["EvalDecision"] == decision, result
 
 
+@pytest.mark.parametrize(
+    "action, name, decision",
+    [
+        ("ssm:GetParameter", EXCLUDED_ACCOUNTS_PARAMETER, "allowed"),
+        (
+            "ssm:GetParameter",
+            f"/loopproof/{TEST_ENVIRONMENT}/external-id",
+            "implicitDeny",
+        ),
+        ("ssm:GetParameters", EXCLUDED_ACCOUNTS_PARAMETER, "implicitDeny"),
+        ("ssm:GetParametersByPath", f"/loopproof/{TEST_ENVIRONMENT}", "implicitDeny"),
+        ("ssm:GetParameterHistory", EXCLUDED_ACCOUNTS_PARAMETER, "implicitDeny"),
+        ("ssm:PutParameter", EXCLUDED_ACCOUNTS_PARAMETER, "implicitDeny"),
+        ("ssm:DeleteParameter", EXCLUDED_ACCOUNTS_PARAMETER, "implicitDeny"),
+        ("ssm:AddTagsToResource", EXCLUDED_ACCOUNTS_PARAMETER, "implicitDeny"),
+    ],
+)
+def test_connector_ssm_simulated(
+    connector, iam_client, aws_region, action, name, decision
+):
+    """In SSM, the IAM policy simulator lets the connector role only read the excluded accounts' parameter."""
+    account_id = connector["outputs"]["event_bus_arn"].split(":")[4]
+    # A hierarchical parameter's name starts with "/", which its ARN doesn't repeat.
+    resource_arn = f"arn:aws:ssm:{aws_region}:{account_id}:parameter{name}"
+    result = iam_client.simulate_principal_policy(
+        PolicySourceArn=connector["outputs"]["role_arn"],
+        ActionNames=[action],
+        ResourceArns=[resource_arn],
+    )["EvaluationResults"][0]
+    assert result["EvalDecision"] == decision, result
+
+
+def test_excluded_accounts_parameter(connector, ssm_client):
+    """
+    With no account excluded, the parameter still exists and holds an empty JSON list, as a standard
+    String parameter, which isn't encrypted with a KMS key.
+    """
+    parameter = ssm_client.get_parameter(Name=EXCLUDED_ACCOUNTS_PARAMETER)["Parameter"]
+    assert parameter["Type"] == "String"
+    assert parameter["Value"] == "[]"
+
+    described = ssm_client.describe_parameters(
+        ParameterFilters=[
+            {"Key": "Name", "Option": "Equals", "Values": [EXCLUDED_ACCOUNTS_PARAMETER]}
+        ]
+    )["Parameters"]
+    assert len(described) == 1
+    assert described[0]["Tier"] == "Standard"
+    assert "KeyId" not in described[0]
+
+    tags = {
+        tag["Key"]: tag["Value"]
+        for tag in ssm_client.list_tags_for_resource(
+            ResourceType="Parameter", ResourceId=EXCLUDED_ACCOUNTS_PARAMETER
+        )["TagList"]
+    }
+    assert tags["created_by_module"] == "infrahouse/loopproof-connector/aws"
+    assert tags["loopproof_environment"] == TEST_ENVIRONMENT
+
+
+def test_connector_reads_excluded_accounts(connector, boto3_session, aws_region):
+    """
+    As the connector role, LoopProof reads the parameter, with no KMS permission, and nothing else
+    in SSM.
+    """
+    outputs = connector["outputs"]
+    probe = ConnectorProbe(boto3_session, aws_region, outputs["role_arn"])
+    values: List[str] = []
+
+    def read() -> bool:
+        try:
+            ssm = probe.session(
+                outputs["probe_role_arn"], connector["external_id"]
+            ).client("ssm")
+            values.append(
+                ssm.get_parameter(Name=EXCLUDED_ACCOUNTS_PARAMETER)["Parameter"][
+                    "Value"
+                ]
+            )
+        except ClientError as err:
+            # STS answers AccessDenied, SSM AccessDeniedException, until IAM has the change.
+            if err.response["Error"]["Code"] in (
+                "AccessDenied",
+                "AccessDeniedException",
+            ):
+                return False
+            raise
+        return True
+
+    wait_for(read, "the connector role can read the excluded accounts")
+    assert values[-1] == "[]"
+
+    ssm = probe.session(outputs["probe_role_arn"], connector["external_id"]).client(
+        "ssm"
+    )
+    refused: List[Callable[[], Any]] = [
+        lambda: ssm.get_parameter(Name=f"/loopproof/{TEST_ENVIRONMENT}/external-id"),
+        lambda: ssm.get_parameters(Names=[EXCLUDED_ACCOUNTS_PARAMETER]),
+        lambda: ssm.get_parameters_by_path(Path=f"/loopproof/{TEST_ENVIRONMENT}"),
+        lambda: ssm.get_parameter_history(Name=EXCLUDED_ACCOUNTS_PARAMETER),
+        lambda: ssm.describe_parameters(),
+    ]
+    for call in refused:
+        with pytest.raises(ClientError) as err:
+            call()
+        assert err.value.response["Error"]["Code"] == "AccessDeniedException"
+
+
 @pytest.mark.parametrize("severity", FORWARDED + NOT_FORWARDED)
 def test_forwarding_pattern(connector, events_client, severity):
     """By default, High, Critical and Fatal findings are forwarded; Low, Medium and Informational aren't."""
@@ -310,7 +441,10 @@ def test_forwarding_pattern_ignores_cspm_events(connector, events_client):
 
 
 def test_forwarding_pattern_document(connector, events_client):
-    """The rule matches the Findings Imported V2 events by OCSF severity_id."""
+    """
+    The rule matches the Findings Imported V2 events by OCSF severity_id. With no account excluded,
+    the pattern has no account filter: it's the pattern of 0.2.0, so upgrading changes no rule.
+    """
     pattern = json.loads(
         events_client.describe_rule(Name=f"loopproof-{TEST_ENVIRONMENT}-findings")[
             "EventPattern"

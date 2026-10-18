@@ -7,6 +7,8 @@ your Security Hub findings into Linear tickets, and nothing more:
   ExternalId, to read findings and set their status and comment.
 * **Forwarding.** An EventBridge rule sends Security Hub's "Findings Imported V2" events of the severities you
   choose to LoopProof's event bus, through a role that may only put events on that bus.
+* **Excluded accounts.** The findings of the accounts you exclude never leave your account, and an SSM parameter
+  tells LoopProof which they are.
 * **Self-registration.** On the first apply, the module reports the role's ARN and the Region to LoopProof with a
   one-time token.
 
@@ -15,6 +17,7 @@ your Security Hub findings into Linear tickets, and nothing more:
 * Trust limited to the control plane's `loopproof-<environment>-*` roles and to one or two ExternalIds
 * `securityhub:GetFindings` and `securityhub:BatchUpdateFindings` only; updates are confined to status and comment
 * Forwarding of new, updated and closed findings by OCSF severity, across accounts and Regions
+* Account exclusion at the edge, with the list published for LoopProof in SSM
 * ExternalId rotation without a failed `AssumeRole`
 * No binary needed on the machine that runs Terraform
 

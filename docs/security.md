@@ -8,18 +8,28 @@ A role of another environment, another account, or any caller without the Extern
 
 ## Permissions
 
-The role can read findings and set their status and comment, and nothing else:
+The role can read findings, set their status and comment, and read the list of the accounts you exclude, and nothing
+else:
 
 * `securityhub:GetFindings`, which `GetFindingsV2` requires;
 * `securityhub:BatchUpdateFindings`, which `BatchUpdateFindingsV2` requires, denied when the request sets
-  `SeverityId` or sets neither `StatusId` nor `Comment`.
+  `SeverityId` or sets neither `StatusId` nor `Comment`;
+* `ssm:GetParameter` on `/loopproof/<environment>/excluded-accounts` alone. That's a `String` parameter, which KMS
+  doesn't encrypt, so the role has no KMS permission.
 
-There is no `iam:*`, no wildcard action, and no access to data outside Security Hub. Both actions take
-`"Resource": "*"`: their resource types are optional, and AWS doesn't document which ARN the V2 APIs are authorized
-against. `securityhub:GetFindings` also authorizes the ASFF `GetFindings` API of Security Hub CSPM; IAM can't tell the
-two apart.
+There is no `iam:*`, no wildcard action, and no access to data outside Security Hub but that parameter. The two
+Security Hub actions take `"Resource": "*"`: their resource types are optional, and AWS doesn't document which ARN the
+V2 APIs are authorized against. `securityhub:GetFindings` also authorizes the ASFF `GetFindings` API of Security Hub
+CSPM; IAM can't tell the two apart.
 
 The forwarder role may only `events:PutEvents` on LoopProof's bus, and only EventBridge, for this rule, may assume it.
+
+## Excluded accounts
+
+The findings of the accounts in `excluded_accounts` never leave your account: the forwarding rule drops them. IAM
+can't limit `securityhub:GetFindings` to some accounts, so the connector role can still read their findings through
+`GetFindingsV2`; LoopProof reads the list from the parameter to leave them out. The list itself isn't secret: the plan
+shows it, and anyone in your account allowed `ssm:GetParameter` on it can read it.
 
 ## The ExternalId
 

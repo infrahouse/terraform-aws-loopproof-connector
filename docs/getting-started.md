@@ -5,7 +5,8 @@
 * Security Hub (the OCSF-based Security Hub, which emits "Findings Imported V2" events) enabled.
 * Terraform `~> 1.5`, with the AWS provider `~> 6.0`. The module also uses the `hashicorp/http` provider; Terraform
   installs it for you.
-* Credentials for the account and Region described below, allowed to manage IAM roles and EventBridge rules.
+* Credentials for the account and Region described below, allowed to manage IAM roles, EventBridge rules and SSM
+  parameters.
 * The module call from LoopProof's onboarding, the ExternalId, and a registration token (`lprt_…`). The token is
   valid for 24 hours.
 

@@ -23,6 +23,13 @@ output "event_rule_arn" {
   value       = aws_cloudwatch_event_rule.findings.arn
 }
 
+output "excluded_accounts_parameter" {
+  description = <<-EOT
+    Name of the SSM parameter that publishes excluded_accounts to LoopProof, /loopproof/<environment>/excluded-accounts.
+  EOT
+  value       = aws_ssm_parameter.excluded_accounts.name
+}
+
 output "registered" {
   description = "true once LoopProof accepted the registration; null when registration_token is null."
   # The postcondition on data.http.registration fails the run on any answer but 200.

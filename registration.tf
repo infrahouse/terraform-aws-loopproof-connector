@@ -24,8 +24,9 @@ data "http" "registration" {
   })
   request_timeout_ms = 30000
 
-  # LoopProof may assume the role as soon as it learns the ARN, so register it with its permissions.
-  depends_on = [aws_iam_role_policy.connector]
+  # LoopProof may assume the role as soon as it learns the ARN, and read the excluded accounts with it,
+  # so register it with its permissions.
+  depends_on = [aws_iam_role_policy.connector, aws_iam_role_policy.connector_excluded_accounts]
 
   lifecycle {
     postcondition {

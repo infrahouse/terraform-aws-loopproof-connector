@@ -35,3 +35,8 @@ variable "severities" {
   type    = list(string)
   default = null
 }
+
+variable "excluded_accounts" {
+  type    = list(string)
+  default = null
+}
