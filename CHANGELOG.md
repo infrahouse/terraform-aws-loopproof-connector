@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-10-18
+
+### Features
+
+- Add excluded_accounts, filtered at the edge and published in SSM
+
 ## [0.2.0] - 2026-10-16
 
 ### Features
