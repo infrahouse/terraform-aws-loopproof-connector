@@ -51,7 +51,7 @@ LoopProof's onboarding generates the module call for you, once, at sign-up. It l
 ```hcl
 module "loopproof_connector" {
   source  = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
-  version = "0.2.0"
+  version = "0.3.0"
 
   environment              = "production"
   control_plane_account_id = "123456789012"
