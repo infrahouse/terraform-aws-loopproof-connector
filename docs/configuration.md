@@ -47,6 +47,25 @@ the ASFF labels of Security Hub CSPM, such as `HIGH`, are rejected.
 severities = ["Medium", "High", "Critical", "Fatal"]
 ```
 
+### `excluded_accounts`
+
+Default `[]`. The AWS accounts you keep out of LoopProof, such as an account outside your audit scope or a
+decommissioned one: twelve digits each, each listed once. Validation messages name the input but don't echo the
+values.
+
+```hcl
+excluded_accounts = ["111122223333", "444455556666"]
+```
+
+* The forwarding rule drops their findings, by the finding's account, `cloud.account.uid`: they never leave your
+  account.
+* The module publishes the list, sorted, as JSON in the `String` parameter `/loopproof/<environment>/excluded-accounts`
+  in the module's Region, such as `["111122223333","444455556666"]`, or `[]` when you exclude nothing. LoopProof reads
+  it with the connector role when it proves your account and daily after. The plan shows the list.
+* A change takes effect on the next apply, which updates the rule and the parameter in place. The order doesn't
+  matter: the module sorts the list.
+* EventBridge limits a rule's pattern to 4096 characters, which holds about 250 accounts.
+
 ## Outputs
 
 | Output | Description |
@@ -56,6 +75,7 @@ severities = ["Medium", "High", "Critical", "Fatal"]
 | `role_name` | `loopproof-<environment>-connector` |
 | `event_rule_arn` | ARN of the EventBridge rule |
 | `registered` | `true` once LoopProof accepted the registration, `null` without a token |
+| `excluded_accounts_parameter` | `/loopproof/<environment>/excluded-accounts`, which publishes `excluded_accounts` |
 
 No output contains an ExternalId or the token.
 

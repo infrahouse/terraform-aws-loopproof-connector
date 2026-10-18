@@ -132,6 +132,31 @@ CASES = [
         None,
     ),
     ("severities-empty", {"severities": []}, "must list at least one severity", None),
+    # The messages name the input without echoing the bad value.
+    (
+        "excluded-account-short",
+        {"excluded_accounts": ["98765432101"]},
+        "excluded_accounts must list 12-digit AWS account IDs",
+        "98765432101",
+    ),
+    (
+        "excluded-account-dashes",
+        {"excluded_accounts": ["9876-5432-1012"]},
+        "excluded_accounts must list 12-digit AWS account IDs",
+        "9876-5432-1012",
+    ),
+    (
+        "excluded-account-letters",
+        {"excluded_accounts": ["98765432101x"]},
+        "excluded_accounts must list 12-digit AWS account IDs",
+        "98765432101x",
+    ),
+    (
+        "excluded-accounts-repeated",
+        {"excluded_accounts": ["987654321012", "987654321012"]},
+        "excluded_accounts must not list an account ID twice",
+        "987654321012",
+    ),
 ]
 
 
@@ -156,6 +181,7 @@ def tfvars(
         "registration_url": "https://api.staging.loopproof.ai/connector/registrations",
         "registration_token": None,
         "severities": None,
+        "excluded_accounts": None,
     }
     values.update(overrides)
     return values
@@ -192,6 +218,8 @@ def validation_root(aws_provider_version):
             ]
         },
         {"environment": "production-eu-1"},
+        {"excluded_accounts": []},
+        {"excluded_accounts": ["987654321012", "210987654321"]},
     ],
     ids=[
         "defaults",
@@ -200,6 +228,8 @@ def validation_root(aws_provider_version):
         "url-localhost",
         "all-severities",
         "environment-hyphens",
+        "excluded-accounts-empty",
+        "excluded-accounts-two",
     ],
 )
 def test_valid_inputs(validation_root, aws_region, test_role_arn, overrides):

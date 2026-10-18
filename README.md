@@ -15,7 +15,8 @@ the access it needs in your account, and nothing more:
 * a cross-account IAM role that LoopProof's control plane assumes, with an ExternalId, to read findings and set
   their status and comment;
 * an EventBridge rule that forwards Security Hub's "Findings Imported V2" events of the severities you choose to
-  LoopProof's event bus;
+  LoopProof's event bus, except the findings of the accounts you exclude;
+* an SSM parameter that tells LoopProof which accounts you exclude;
 * a one-time call that reports the role's ARN and the Region to LoopProof, so onboarding needs no copy and paste.
 
 ## Why This Module?
@@ -37,9 +38,11 @@ permissions, a long-lived ExternalId in a tfvars file, and an ARN pasted into a 
 * Least-privilege permissions: `securityhub:GetFindings` and `securityhub:BatchUpdateFindings`, the latter confined
   to the status and the comment
 * Forwarding of new, updated and closed findings by OCSF severity, to a bus in another account and Region
+* Account exclusion: the findings of the accounts in `excluded_accounts` never leave your account, and the list is
+  published in SSM for LoopProof to read
 * Forwarder role that may only `events:PutEvents` on LoopProof's bus
 * Self-registration through the `hashicorp/http` data source, with the token kept out of plan output
-* Input validation for account ID, ExternalIds, bus ARN, registration URL, token and severities
+* Input validation for account ID, ExternalIds, bus ARN, registration URL, token, severities and excluded accounts
 
 ## Quick Start
 
@@ -127,6 +130,31 @@ Region, so LoopProof can't learn it from the ARN.
   instead. The `role_arn` and `region` outputs have them too. The ARN is only a hint: LoopProof proves the account
   later by assuming the role.
 
+### Excluding accounts
+
+To keep an account out of LoopProof, such as an account outside your audit scope or a decommissioned one, list it in
+`excluded_accounts`:
+
+```hcl
+module "loopproof_connector" {
+  # ...
+  excluded_accounts = ["111122223333"]
+}
+```
+
+* The forwarding rule drops the findings of those accounts, by the finding's account (`cloud.account.uid`), so they
+  never leave your account.
+* The module publishes the list, sorted, as JSON in the SSM `String` parameter
+  `/loopproof/<environment>/excluded-accounts`, in the module's Region; the `excluded_accounts_parameter` output
+  names it. The parameter exists, holding `[]`, when you exclude nothing. LoopProof reads it with the connector role
+  when it proves your account, and daily after, to keep those accounts out of its scope. The role may read that
+  parameter and nothing else in SSM.
+* A change takes effect on the next apply. Make it as you change the rest of your Terraform, by pull request;
+  LoopProof doesn't ask why.
+* IAM can't limit `securityhub:GetFindings` to some accounts, so the connector role can still read an excluded
+  account's findings through `GetFindingsV2`. The list is how LoopProof knows to leave them out.
+* EventBridge limits a rule's pattern to 4096 characters, which holds about 250 excluded accounts.
+
 ### Events are refused until LoopProof proves the account
 
 Until LoopProof has proven your account (a later onboarding step, in which it assumes the role), its bus refuses
@@ -183,8 +211,11 @@ No modules.
 | [aws_iam_role.connector](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role.forwarder](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.connector](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy.connector_excluded_accounts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy.forwarder](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_ssm_parameter.excluded_accounts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ssm_parameter) | resource |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
+| [aws_iam_policy_document.connector_excluded_accounts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.connector_permissions](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.connector_trust](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.forwarder_permissions](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
@@ -200,6 +231,7 @@ No modules.
 | <a name="input_control_plane_account_id"></a> [control\_plane\_account\_id](#input\_control\_plane\_account\_id) | ID of LoopProof's control-plane AWS account for this environment. Twelve digits. | `string` | n/a | yes |
 | <a name="input_environment"></a> [environment](#input\_environment) | LoopProof's environment, such as staging or production. It names the connector role<br/>(loopproof-<environment>-connector) and selects the control-plane roles allowed to assume it<br/>(loopproof-<environment>-*). | `string` | n/a | yes |
 | <a name="input_event_bus_arn"></a> [event\_bus\_arn](#input\_event\_bus\_arn) | ARN of LoopProof's control-plane EventBridge bus that receives the forwarded findings. | `string` | n/a | yes |
+| <a name="input_excluded_accounts"></a> [excluded\_accounts](#input\_excluded\_accounts) | IDs of the AWS accounts you exclude from LoopProof, such as an account outside your audit scope or a<br/>decommissioned one. The forwarding rule drops their findings, so they never leave this account, and the<br/>module publishes the list in the SSM parameter /loopproof/<environment>/excluded-accounts, where LoopProof<br/>reads it. A change takes effect on the next apply. | `list(string)` | `[]` | no |
 | <a name="input_external_ids"></a> [external\_ids](#input\_external\_ids) | ExternalIds that LoopProof presents when it assumes the connector role. One value normally,<br/>two during a rotation. LoopProof generates them; feed them from your own parameter store and<br/>never commit them. | `list(string)` | n/a | yes |
 | <a name="input_registration_token"></a> [registration\_token](#input\_registration\_token) | One-time registration token (lprt\_...) from LoopProof's onboarding, valid for 24 hours.<br/>When set, the module reports the connector role's ARN and the Region it is applied in to<br/>registration\_url: LoopProof reads Security Hub's findings in that Region, which an ARN doesn't name.<br/>Set it for the first apply and remove it afterwards. When null, the module makes no call. | `string` | `null` | no |
 | <a name="input_registration_url"></a> [registration\_url](#input\_registration\_url) | LoopProof's connector registration endpoint, such as<br/>https://api.staging.loopproof.ai/connector/registrations. The module POSTs the connector<br/>role's ARN and the Region it is applied in there. It must use https://;<br/>http:// is accepted only for 127.0.0.1 and localhost, for tests. | `string` | n/a | yes |
@@ -210,6 +242,7 @@ No modules.
 | Name | Description |
 |------|-------------|
 | <a name="output_event_rule_arn"></a> [event\_rule\_arn](#output\_event\_rule\_arn) | ARN of the EventBridge rule that forwards Security Hub findings to LoopProof. |
+| <a name="output_excluded_accounts_parameter"></a> [excluded\_accounts\_parameter](#output\_excluded\_accounts\_parameter) | Name of the SSM parameter that publishes excluded\_accounts to LoopProof, /loopproof/<environment>/excluded-accounts. |
 | <a name="output_region"></a> [region](#output\_region) | Region the module is applied in, where LoopProof reads the Security Hub findings. Paste it into LoopProof's<br/>onboarding with role\_arn if the registration call failed. |
 | <a name="output_registered"></a> [registered](#output\_registered) | true once LoopProof accepted the registration; null when registration\_token is null. |
 | <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | ARN of the connector role. Paste it into LoopProof's onboarding, with region, if the registration call failed. |

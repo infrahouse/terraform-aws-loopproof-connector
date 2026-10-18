@@ -15,3 +15,6 @@ TF_VAR_registration_token=lprt_... terraform apply \
 ```
 
 Apply again without `TF_VAR_registration_token` afterwards: the token is single-use and expires in 24 hours.
+
+To keep an account's findings out of LoopProof, add `-var 'excluded_accounts=["111122223333"]'`; any later apply can
+change the list.

@@ -7,9 +7,13 @@ locals {
   # The AWS provider's Region, where the tenant applies the module: Security Hub's home Region.
   region = data.aws_region.current.region
 
-  connector_role_name = "loopproof-${var.environment}-connector"
-  forwarder_role_name = "loopproof-${var.environment}-forwarder"
-  rule_name           = "loopproof-${var.environment}-findings"
+  connector_role_name              = "loopproof-${var.environment}-connector"
+  forwarder_role_name              = "loopproof-${var.environment}-forwarder"
+  rule_name                        = "loopproof-${var.environment}-findings"
+  excluded_accounts_parameter_name = "/loopproof/${var.environment}/excluded-accounts"
+
+  # Sorted, so that reordering the list changes neither the rule nor the parameter.
+  excluded_accounts = sort(var.excluded_accounts)
 
   # Only the control plane's own roles for this environment may assume the connector role.
   control_plane_iam_prefix   = "arn:${local.partition}:iam::${var.control_plane_account_id}"
@@ -38,11 +42,21 @@ locals {
     source        = ["aws.securityhub"]
     "detail-type" = ["Findings Imported V2"]
     detail = {
-      findings = {
-        severity_id = [for severity in var.severities : local.severity_ids[severity]]
-      }
+      findings = merge(
+        { severity_id = [for severity in var.severities : local.severity_ids[severity]] },
+        local.excluded_accounts_filter...
+      )
     }
   }
+
+  # The finding's account is cloud.account.uid. "anything-but" with no values isn't a valid pattern, so
+  # the filter is there only when an account is excluded, and a tenant who excludes none keeps the
+  # pattern it had before. Like the rest of the pattern, it relies on one finding per event:
+  # EventBridge matches an array when any element matches, so an event that also held a finding of
+  # another account would be forwarded whole.
+  excluded_accounts_filter = length(local.excluded_accounts) > 0 ? [
+    { cloud = { account = { uid = [{ "anything-but" = local.excluded_accounts }] } } }
+  ] : []
 
   # count can't use a sensitive value; whether a token was given is not itself a secret.
   register = nonsensitive(var.registration_token != null)

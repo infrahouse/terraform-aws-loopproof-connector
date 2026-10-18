@@ -148,3 +148,30 @@ variable "severities" {
     error_message = "severities must not repeat a value. Got: ${jsonencode(var.severities)}"
   }
 }
+
+variable "excluded_accounts" {
+  type        = list(string)
+  description = <<-EOT
+    IDs of the AWS accounts you exclude from LoopProof, such as an account outside your audit scope or a
+    decommissioned one. The forwarding rule drops their findings, so they never leave this account, and the
+    module publishes the list in the SSM parameter /loopproof/<environment>/excluded-accounts, where LoopProof
+    reads it. A change takes effect on the next apply.
+  EOT
+  default     = []
+  nullable    = false
+
+  # The messages name the input but don't echo its values.
+  validation {
+    condition = alltrue([
+      for account_id in var.excluded_accounts : can(regex("^[0-9]{12}$", account_id))
+    ])
+    error_message = <<-EOT
+      excluded_accounts must list 12-digit AWS account IDs, such as "123456789012", without dashes or spaces.
+    EOT
+  }
+
+  validation {
+    condition     = length(distinct(var.excluded_accounts)) == length(var.excluded_accounts)
+    error_message = "excluded_accounts must not list an account ID twice."
+  }
+}

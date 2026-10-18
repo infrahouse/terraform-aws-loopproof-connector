@@ -29,6 +29,12 @@ variable "registration_url" {
   description = "LoopProof's registration endpoint, from the generated module call."
 }
 
+variable "excluded_accounts" {
+  type        = list(string)
+  description = "AWS accounts to keep out of LoopProof, such as an account outside your audit scope."
+  default     = []
+}
+
 variable "registration_token" {
   type        = string
   description = "One-time registration token from LoopProof's onboarding. Set it for the first apply only."

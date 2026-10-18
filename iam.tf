@@ -102,6 +102,23 @@ resource "aws_iam_role_policy" "connector" {
   policy = data.aws_iam_policy_document.connector_permissions.json
 }
 
+# LoopProof reads the excluded accounts with the connector role. KMS encrypts only SecureString
+# parameters, so reading a String parameter takes no KMS permission.
+# https://docs.aws.amazon.com/kms/latest/developerguide/services-parameter-store.html
+data "aws_iam_policy_document" "connector_excluded_accounts" {
+  statement {
+    sid       = "ReadExcludedAccounts"
+    actions   = ["ssm:GetParameter"]
+    resources = [aws_ssm_parameter.excluded_accounts.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "connector_excluded_accounts" {
+  name   = "excluded-accounts-parameter"
+  role   = aws_iam_role.connector.id
+  policy = data.aws_iam_policy_document.connector_excluded_accounts.json
+}
+
 # The forwarder role: EventBridge assumes it to put the matching findings on the control-plane bus.
 
 data "aws_iam_policy_document" "forwarder_trust" {

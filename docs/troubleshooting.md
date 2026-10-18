@@ -44,6 +44,12 @@ and remove the token.
   ExternalId now and then. A value that was already listed keeps working. Wait about 10 minutes before LoopProof
   switches to a new value.
 
+## One account's findings never reach LoopProof
+
+* `excluded_accounts` lists the account. Its findings stay in your account by design; the parameter
+  `/loopproof/<environment>/excluded-accounts` shows the list the last apply published.
+* The account isn't a member of the Security Hub you installed the module in.
+
 ## No Findings Imported V2 events at all
 
 * The module isn't in Security Hub's home Region, or not in the delegated administrator account. Findings of member

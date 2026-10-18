@@ -14,6 +14,10 @@ output "event_rule_arn" {
   value = module.connector.event_rule_arn
 }
 
+output "excluded_accounts_parameter" {
+  value = module.connector.excluded_accounts_parameter
+}
+
 output "registered" {
   value = module.connector.registered
 }

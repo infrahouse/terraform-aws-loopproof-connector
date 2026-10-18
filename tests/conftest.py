@@ -36,9 +36,13 @@ CONNECTOR_ROOT = osp.join(TERRAFORM_ROOT_DIR, "connector")
 VALIDATION_ROOT = osp.join(TERRAFORM_ROOT_DIR, "validation")
 
 TEST_ENVIRONMENT = "pytest"
+RULE_NAME = f"loopproof-{TEST_ENVIRONMENT}-findings"
+EXCLUDED_ACCOUNTS_PARAMETER = f"/loopproof/{TEST_ENVIRONMENT}/excluded-accounts"
 # JSON, which Terraform loads by itself and `terraform fmt` leaves alone.
 TFVARS_FILE = "terraform.tfvars.json"
 REGISTRATION_PATH = "/connector/registrations"
+# For installs without a token, which never call it.
+UNCALLED_REGISTRATION_URL = "https://api.loopproof.invalid/connector/registrations"
 SAMPLE_EVENT_PATH = osp.join(osp.dirname(__file__), "data", "findings-imported-v2.json")
 
 # A new or changed trust policy can take a minute or more to apply everywhere in IAM.
@@ -120,6 +124,7 @@ def connector_tfvars(
     external_ids: List[str],
     registration_url: str,
     registration_token: Optional[str] = None,
+    excluded_accounts: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Build the variables of the ``connector`` test root module.
@@ -129,6 +134,7 @@ def connector_tfvars(
     :param external_ids: ExternalIds for the connector role.
     :param registration_url: Where the module reports the role ARN.
     :param registration_token: Registration token; ``None`` disables the call.
+    :param excluded_accounts: Accounts whose findings aren't forwarded; ``None`` for the module's default.
     :return: Variable names and values.
     """
     return {
@@ -138,6 +144,7 @@ def connector_tfvars(
         "external_ids": external_ids,
         "registration_url": registration_url,
         "registration_token": registration_token,
+        "excluded_accounts": excluded_accounts,
     }
 
 
@@ -336,17 +343,30 @@ class ConnectorProbe:
         :raise ClientError: On any other STS error.
         """
         try:
-            assumed_session(
-                self._principal(principal_role_arn),
-                self._connector_role_arn,
-                self._region,
-                external_id,
-            )
+            self.session(principal_role_arn, external_id)
         except ClientError as err:
             if err.response["Error"]["Code"] == "AccessDenied":
                 return False
             raise
         return True
+
+    def session(
+        self, principal_role_arn: str, external_id: Optional[str]
+    ) -> boto3.Session:
+        """
+        Assume the connector role.
+
+        :param principal_role_arn: The stand-in control-plane role to call from.
+        :param external_id: ExternalId to present, or None to present none.
+        :return: Session as the connector role.
+        :raise ClientError: If STS refuses.
+        """
+        return assumed_session(
+            self._principal(principal_role_arn),
+            self._connector_role_arn,
+            self._region,
+            external_id,
+        )
 
     # --- Private methods ---
 
@@ -473,7 +493,21 @@ def registration_server() -> Iterator[RegistrationServer]:
         yield server
 
 
-def finding_event(severity: str, activity: str = "Create") -> Dict[str, Any]:
+@pytest.fixture()
+def events_client(boto3_session, aws_region):
+    """EventBridge in the tenant's Region, where the module puts the rule."""
+    return boto3_session.client("events", region_name=aws_region)
+
+
+@pytest.fixture()
+def ssm_client(boto3_session, aws_region):
+    """Systems Manager in the tenant's Region, where the module puts the parameter."""
+    return boto3_session.client("ssm", region_name=aws_region)
+
+
+def finding_event(
+    severity: str, activity: str = "Create", account_id: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Build a "Findings Imported V2" event from the sample in ``tests/data``.
 
@@ -484,6 +518,7 @@ def finding_event(severity: str, activity: str = "Create") -> Dict[str, Any]:
 
     :param severity: OCSF severity caption, such as ``High``.
     :param activity: OCSF activity: ``Create``, ``Update`` or ``Close``.
+    :param account_id: The finding's account, ``cloud.account.uid``; the sample's when ``None``.
     :return: The event.
     """
     with open(SAMPLE_EVENT_PATH, encoding="utf-8") as fp:
@@ -499,7 +534,38 @@ def finding_event(severity: str, activity: str = "Create") -> Dict[str, Any]:
     if activity == "Close":
         finding["status"] = "Resolved"
         finding["status_id"] = 4
+    if account_id is not None:
+        finding["cloud"]["account"]["uid"] = account_id
     return event
+
+
+def forwarding_pattern_document(excluded_accounts: List[str]) -> Dict[str, Any]:
+    """
+    :param excluded_accounts: The excluded accounts, sorted.
+    :return: The forwarding pattern the module should write for the default severities.
+    """
+    findings: Dict[str, Any] = {
+        "severity_id": [OCSF_SEVERITY_IDS[s] for s in ["High", "Critical", "Fatal"]]
+    }
+    if excluded_accounts:
+        findings["cloud"] = {"account": {"uid": [{"anything-but": excluded_accounts}]}}
+    return {
+        "source": ["aws.securityhub"],
+        "detail-type": ["Findings Imported V2"],
+        "detail": {"findings": findings},
+    }
+
+
+def forwarded(events_client: Any, event: Dict[str, Any]) -> bool:
+    """
+    :param events_client: EventBridge in the tenant's Region.
+    :param event: A "Findings Imported V2" event.
+    :return: Whether the forwarding rule's pattern, as EventBridge stores it, matches the event.
+    """
+    pattern = events_client.describe_rule(Name=RULE_NAME)["EventPattern"]
+    return events_client.test_event_pattern(
+        EventPattern=pattern, Event=json.dumps(event)
+    )["Result"]
 
 
 def policy_statements(document: Any) -> List[Dict[str, Any]]:

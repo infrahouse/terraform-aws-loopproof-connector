@@ -8,6 +8,7 @@ flowchart LR
         RULE["Rule loopproof-&lt;env&gt;-findings"]
         FWD["Role loopproof-&lt;env&gt;-forwarder"]
         CONN["Role loopproof-&lt;env&gt;-connector"]
+        PARAM["SSM parameter /loopproof/&lt;env&gt;/excluded-accounts"]
         SH -- "Findings Imported V2" --> DB --> RULE
         RULE -. assumes .-> FWD
     end
@@ -19,6 +20,7 @@ flowchart LR
     RULE -- "events:PutEvents" --> BUS
     CPR -- "sts:AssumeRole + ExternalId" --> CONN
     CONN -- "GetFindingsV2, BatchUpdateFindingsV2" --> SH
+    CONN -- "GetParameter" --> PARAM
     CONN -. "role ARN and Region, once" .-> API
 ```
 
@@ -39,6 +41,9 @@ Its inline policy `security-hub-findings`:
 | `UpdateFindings` | Allow | `securityhub:BatchUpdateFindings` | Authorizes `BatchUpdateFindingsV2` |
 | `DenySeverityUpdates` | Deny | same | If the request sets `SeverityId` |
 | `DenyUpdatesWithoutStatusOrComment` | Deny | same | If it sets no `StatusId` and no `Comment` |
+
+Its inline policy `excluded-accounts-parameter` allows `ssm:GetParameter` on the
+[excluded accounts' parameter](#excluded-accounts) alone.
 
 The Security Hub v2 APIs have no IAM actions of their own: `GetFindingsV2` uses `securityhub:GetFindings`, and
 `BatchUpdateFindingsV2` uses `securityhub:BatchUpdateFindings`
@@ -78,6 +83,27 @@ input takes the captions and the module maps them:
 | Fatal | 6 |
 | Other | 99 |
 
+When `excluded_accounts` lists accounts, the pattern also refuses their findings, by the finding's account:
+
+```json
+{
+  "source": ["aws.securityhub"],
+  "detail-type": ["Findings Imported V2"],
+  "detail": {
+    "findings": {
+      "severity_id": [4, 5, 6],
+      "cloud": {"account": {"uid": [{"anything-but": ["111122223333"]}]}}
+    }
+  }
+}
+```
+
+With an empty list, the pattern has no account filter, as before the input existed: `anything-but` with no values
+isn't a valid pattern. A finding without `cloud.account.uid` doesn't match `anything-but`, so while accounts are
+excluded it isn't forwarded; Security Hub's findings carry it. The filter relies on one finding per event: EventBridge
+matches an array when any of its elements matches, so an event that held findings of an excluded account and of
+another would be forwarded whole.
+
 The rule doesn't filter on the activity: new (`Create`), updated and closed findings all pass, and the control plane
 drops the echoes of its own updates. Security Hub CSPM events share the `aws.securityhub` source but use another
 detail-type, so they don't match.
@@ -86,10 +112,19 @@ The target is LoopProof's bus, in another account and usually another Region. Ev
 target; `loopproof-<environment>-forwarder` trusts `events.amazonaws.com` for this rule only (`aws:SourceArn`,
 `aws:SourceAccount`) and may only `events:PutEvents` on that bus.
 
+## Excluded accounts
+
+The `String` parameter `/loopproof/<environment>/excluded-accounts`, in the module's Region, holds `excluded_accounts`
+sorted, as JSON: `[]` when you exclude nothing. It always exists, so that LoopProof can tell a connector that excludes
+nothing from one too old to say. LoopProof reads it with the connector role when it proves your account and daily
+after: the registration token works only until then, and the list may change later. It's a standard parameter, not a
+`SecureString`, so it isn't encrypted with a KMS key and reading it needs no KMS permission
+([Parameter Store and KMS](https://docs.aws.amazon.com/kms/latest/developerguide/services-parameter-store.html)).
+
 ## Registration
 
 With `registration_token` set, an `http` data source POSTs `{"role_arn": "<role arn>", "region": "<region>"}` to
-`registration_url`, with `Authorization: Bearer <token>`, after the role and its policy exist. A postcondition fails
+`registration_url`, with `Authorization: Bearer <token>`, after the role and its policies exist. A postcondition fails
 the run on any answer but `200`. See [Security](security.md#the-registration-token) for what Terraform prints and
 stores.
 

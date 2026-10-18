@@ -8,6 +8,11 @@ output "region" {
   value       = module.loopproof_connector.region
 }
 
+output "excluded_accounts_parameter" {
+  description = "The SSM parameter where LoopProof reads the excluded accounts."
+  value       = module.loopproof_connector.excluded_accounts_parameter
+}
+
 output "registered" {
   description = "true once LoopProof accepted the registration; null without a token."
   value       = module.loopproof_connector.registered

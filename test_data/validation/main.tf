@@ -9,4 +9,5 @@ module "connector" {
   registration_url         = var.registration_url
   registration_token       = var.registration_token
   severities               = var.severities
+  excluded_accounts        = var.excluded_accounts
 }
