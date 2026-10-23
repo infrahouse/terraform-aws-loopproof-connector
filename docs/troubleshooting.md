@@ -39,8 +39,8 @@ failed, and it is tainted.
 * A `401` usually means the token expired (it's valid for 24 hours), was replaced by a newer one, or registered
   nothing before the tenant was provisioned. A `409` means the token already registered another role.
 * Get a new registration token in LoopProof, put it in the token parameter, and run a plain `terraform apply`: the
-  tainted registration runs again by itself. LoopProof issues new tokens only until your tenant is provisioned; after
-  that, put back the token the connector registered with, which LoopProof keeps accepting for the same role.
+  tainted registration runs again by itself. The token the connector registered with also works again, if you still
+  have it: LoopProof keeps accepting its tenant's token for the role it already has.
 * Or paste the role ARN and the Region from the error, or the `role_arn` and `region` outputs, into LoopProof's
   onboarding.
 

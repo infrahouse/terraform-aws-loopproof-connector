@@ -104,8 +104,7 @@ linked Region, and `GetFindingsV2` can read them all.
 
 Later plans and applies read the parameters but never call LoopProof. Keep both parameters, since the module reads
 them on every plan, and keep the token in its parameter: it registers the role again when the role is replaced, and
-LoopProof issues a new token only until your tenant is provisioned. See
-[Security](security.md#the-registration-token).
+a lost token has to come from LoopProof. See [Security](security.md#the-registration-token).
 
 ## A machine that can't reach LoopProof
 
