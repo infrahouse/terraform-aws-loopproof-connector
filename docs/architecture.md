@@ -9,6 +9,8 @@ flowchart LR
         FWD["Role loopproof-&lt;env&gt;-forwarder"]
         CONN["Role loopproof-&lt;env&gt;-connector"]
         PARAM["SSM parameter /loopproof/&lt;env&gt;/excluded-accounts"]
+        CREDS["SSM parameters: ExternalIds, registration token"]
+        TF["Terraform, the applier's machine"]
         SH -- "Findings Imported V2" --> DB --> RULE
         RULE -. assumes .-> FWD
     end
@@ -21,7 +23,8 @@ flowchart LR
     CPR -- "sts:AssumeRole + ExternalId" --> CONN
     CONN -- "GetFindingsV2, BatchUpdateFindingsV2" --> SH
     CONN -- "GetParameter" --> PARAM
-    CONN -. "role ARN and Region, once" .-> API
+    TF -- "reads" --> CREDS
+    TF -. "role ARN and Region, once, with curl" .-> API
 ```
 
 ## The connector role
@@ -31,7 +34,8 @@ conditions:
 
 * `ArnLike aws:PrincipalArn` `arn:aws:iam::<account>:role/loopproof-<environment>-*`: only LoopProof's own roles
   for that environment;
-* `StringEquals sts:ExternalId` over `external_ids`: one value, or two during a rotation.
+* `StringEquals sts:ExternalId` over the ExternalIds in the parameter that `external_ids_parameter_arn` names: one
+  value, or two during a rotation.
 
 Its inline policy `security-hub-findings`:
 
@@ -121,12 +125,37 @@ after: the registration token works only until then, and the list may change lat
 `SecureString`, so it isn't encrypted with a KMS key and reading it needs no KMS permission
 ([Parameter Store and KMS](https://docs.aws.amazon.com/kms/latest/developerguide/services-parameter-store.html)).
 
+## The parameters
+
+The tenant's root creates two SSM SecureString parameters (Part 1), with the write-only placeholder `unset`, and
+passes their ARNs to the module (Part 2). The module reads them with the AWS provider's credentials:
+
+* the ExternalIds with `data "aws_ssm_parameter"`, decrypted. Two postconditions check the value before anything
+  uses it: first that it isn't the placeholder, then that it is a JSON list of one or two ExternalIds. Only then
+  does `local.external_ids` decode it, for the trust policy;
+* the token with `ephemeral "aws_ssm_parameter"`, decrypted, which Terraform keeps out of the plan and the state.
+
+On a new root's first apply, the parameters' ARNs are unknown at plan, so both reads wait until the apply has created
+the parameters; the ExternalIds' check then stops the run at the placeholder. After the tenant fills both, the next
+apply creates the connector.
+
 ## Registration
 
-With `registration_token` set, an `http` data source POSTs `{"role_arn": "<role arn>", "region": "<region>"}` to
-`registration_url`, with `Authorization: Bearer <token>`, after the role and its policies exist. A postcondition fails
-the run on any answer but `200`. See [Security](security.md#the-registration-token) for what Terraform prints and
-stores.
+`terraform_data.registration`, keyed on the role's ARN (`triggers_replace`), runs a `local-exec` provisioner when it
+is created: `/bin/sh files/register.sh`, after the role and its policies exist. The script:
+
+1. checks `command -v curl`, and fails with a plain message without it;
+2. fails, naming the parameter, if the token parameter holds the placeholder or something that doesn't start with
+   `lprt_`;
+3. POSTs `{"role_arn": "<role arn>", "region": "<region>"}` to `registration_url` with
+   `curl -sS --fail-with-body --max-time 30`, the header `Authorization: Bearer <token>` read from standard input;
+4. succeeds on a 2xx; fails at once on a 4xx; tries again after a connection error, a timeout or a 5xx, four
+   attempts in all.
+
+A failure prints LoopProof's answer, what to do, and the role's ARN and the Region to paste instead, and leaves the
+resource tainted, so the next apply runs it again. A replaced role has an unknown ARN in the plan, which replaces the
+resource and registers again; so does `terraform apply -replace`. Nothing else does: later plans and applies make no
+call. See [Security](security.md#the-registration-token) for what Terraform prints and stores.
 
 `region` is the AWS provider's Region, such as `us-east-1`: the Region the module is applied in, which should be
 Security Hub's home Region. LoopProof reads the findings there. An IAM role ARN carries no Region, so LoopProof can't

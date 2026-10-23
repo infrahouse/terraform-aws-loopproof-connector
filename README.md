@@ -17,7 +17,8 @@ the access it needs in your account, and nothing more:
 * an EventBridge rule that forwards Security Hub's "Findings Imported V2" events of the severities you choose to
   LoopProof's event bus, except the findings of the accounts you exclude;
 * an SSM parameter that tells LoopProof which accounts you exclude;
-* a one-time call that reports the role's ARN and the Region to LoopProof, so onboarding needs no copy and paste.
+* one call, on the apply that creates the role, that reports the role's ARN and the Region to LoopProof, so
+  onboarding needs no copy and paste.
 
 ## Why This Module?
 
@@ -26,10 +27,11 @@ permissions, a long-lived ExternalId in a tfvars file, and an ARN pasted into a 
 
 * trusts only LoopProof's own roles for your environment, by role name and ExternalId;
 * grants the two IAM actions the Security Hub v2 APIs need, and denies any update but status and comment;
-* treats the ExternalId as a credential: it's a sensitive input, masked in plan output, and never written to an
-  output, a tag or a description;
-* rotates the ExternalId without a single failed `AssumeRole`;
-* registers itself, with no binary needed on the machine that runs Terraform.
+* treats the ExternalId and the registration token as credentials: it reads both from SSM SecureString parameters
+  in your account, never from its inputs, so neither is ever in your code or a tfvars file, and the token is in
+  neither the plan nor the state;
+* rotates the ExternalId without a single failed `AssumeRole`, and without a change to your Terraform;
+* registers itself once, at apply, and never calls LoopProof on a plan.
 
 ## Features
 
@@ -41,37 +43,90 @@ permissions, a long-lived ExternalId in a tfvars file, and an ARN pasted into a 
 * Account exclusion: the findings of the accounts in `excluded_accounts` never leave your account, and the list is
   published in SSM for LoopProof to read
 * Forwarder role that may only `events:PutEvents` on LoopProof's bus
-* Self-registration through the `hashicorp/http` data source, with the token kept out of plan output
-* Input validation for account ID, ExternalIds, bus ARN, registration URL, token, severities and excluded accounts
+* The ExternalIds read from an SSM parameter, checked before use; the registration token read as an ephemeral value
+* Self-registration once, at apply, with `curl`, retried on connection errors and 5xx answers only
+* Input validation for account ID, parameter ARNs, bus ARN, registration URL, severities and excluded accounts
 
 ## Quick Start
 
-LoopProof's onboarding generates the module call for you, once, at sign-up. It looks like this:
+LoopProof's onboarding shows you the ExternalId and a registration token, once, and generates the Terraform for
+you, in two parts that go in the same root. It looks like this.
+
+**Part 1, the values.** Two SSM SecureString parameters in the account and Region where you install the connector,
+created with the placeholder `unset`. The placeholder is write-only (`value_wo`), so Terraform never stores or
+compares the value, and never writes it again: you fill the parameters yourself, below. Write-only arguments need
+Terraform 1.11.
+
+```hcl
+resource "aws_ssm_parameter" "loopproof_external_ids" {
+  name             = "/loopproof/production/external-ids"
+  description      = "ExternalIds that LoopProof presents to the connector role, as a JSON list."
+  type             = "SecureString"
+  value_wo         = "unset"
+  value_wo_version = 1
+}
+
+resource "aws_ssm_parameter" "loopproof_registration_token" {
+  name             = "/loopproof/production/registration-token"
+  description      = "Registration token from LoopProof's onboarding."
+  type             = "SecureString"
+  value_wo         = "unset"
+  value_wo_version = 1
+}
+```
+
+**Part 2, the connector.** The module takes the two parameters' ARNs, never their values, and reads them itself
+with the AWS provider's credentials:
 
 ```hcl
 module "loopproof_connector" {
   source  = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
   version = "0.3.0"
 
-  environment              = "production"
-  control_plane_account_id = "123456789012"
-  external_ids             = [var.loopproof_external_id]
-  event_bus_arn            = "arn:aws:events:us-west-1:123456789012:event-bus/loopproof-production-findings"
-  registration_url         = "https://api.loopproof.ai/connector/registrations"
-  registration_token       = var.loopproof_registration_token
-}
-
-variable "loopproof_external_id" {
-  type      = string
-  sensitive = true
-}
-
-variable "loopproof_registration_token" {
-  type      = string
-  sensitive = true
-  default   = null
+  environment                      = "production"
+  control_plane_account_id         = "123456789012"
+  external_ids_parameter_arn       = aws_ssm_parameter.loopproof_external_ids.arn
+  registration_token_parameter_arn = aws_ssm_parameter.loopproof_registration_token.arn
+  event_bus_arn                    = "arn:aws:events:us-west-1:123456789012:event-bus/loopproof-production-findings"
+  registration_url                 = "https://api.loopproof.ai/connector/registrations"
 }
 ```
+
+If you manage parameters another way, skip Part 1 and pass the ARNs of your own SecureString parameters as strings.
+
+### Installing: apply, fill, apply
+
+1. **`terraform apply`.** It creates the two parameters. The module waits for them, reads the placeholder, and
+   stops with an error that names the parameter to fill. Nothing else is created yet.
+2. **Fill both parameters**, with the commands below, in the same account and Region.
+3. **`terraform apply`** again. It creates the connector and registers the role with LoopProof.
+
+`terraform apply -target` on the two parameters, then a plain apply, does the same without the first error.
+
+### Filling the parameters
+
+Each command asks for the value without echoing it, and hands it to the AWS CLI on its standard input, so it is on
+no command line and in no shell history. Use credentials and a Region for the account where you install the
+connector, and the parameter names from Part 1.
+
+The ExternalIds, as a JSON list:
+
+```bash
+printf 'ExternalId: ' >&2; stty -echo; read -r value; stty echo; printf '\n' >&2
+printf '["%s"]' "$value" | aws ssm put-parameter --overwrite --type SecureString \
+  --name /loopproof/production/external-ids --value file:///dev/stdin; unset value
+```
+
+The registration token:
+
+```bash
+printf 'Registration token: ' >&2; stty -echo; read -r value; stty echo; printf '\n' >&2
+printf '%s' "$value" | aws ssm put-parameter --overwrite --type SecureString \
+  --name /loopproof/production/registration-token --value file:///dev/stdin; unset value
+```
+
+If Part 1 gives the parameters a customer-managed KMS key (`key_id`), add `--key-id` with that key to both
+commands: without it, SSM re-encrypts the value with the default key `aws/ssm`.
 
 ### Where to install it
 
@@ -83,52 +138,80 @@ Install it in the account where Security Hub collects your findings, in Security
 
 There, Security Hub's event feed includes the findings of the member accounts and of the linked Regions.
 
-### The ExternalId is a credential
+### Permissions for whoever applies it
 
-LoopProof generates the ExternalId; you only feed it in. Keep it in your own parameter store, such as AWS Systems
-Manager Parameter Store or Secrets Manager, and pass it as a sensitive variable. Never commit it.
+Besides managing IAM roles, EventBridge rules and SSM parameters:
 
-```hcl
-data "aws_ssm_parameter" "loopproof_external_id" {
-  name = "/loopproof/external-id"
-}
+* `ssm:GetParameter` on `/loopproof/<environment>/*`: the module reads both parameters on every plan and apply;
+* `kms:Decrypt` on the key, if Part 1 gives the parameters a customer-managed key instead of the default
+  `aws/ssm`, whose key policy already allows it to the account's principals;
+* `curl` on the machine that runs Terraform, Linux or macOS, with HTTPS access to `registration_url`. Windows isn't
+  supported.
 
-module "loopproof_connector" {
-  # ...
-  external_ids = [data.aws_ssm_parameter.loopproof_external_id.value]
-}
-```
+The fill commands need `ssm:PutParameter`, and with a customer-managed key `kms:Encrypt` and `kms:GenerateDataKey`.
 
-The module never writes the ExternalId to an output, a tag, a description or a log, and the plan shows the trust
-policy as `(sensitive value)`. Like every input, it is stored in the Terraform state, so protect the state as usual.
+### The values are credentials
+
+LoopProof generates the ExternalId and the token, and treats both as credentials; so does the module:
+
+* neither is an input, so neither is ever in your code or a tfvars file;
+* the ExternalIds are checked before they're used: the placeholder, or a value that isn't a JSON list of one or two
+  ExternalIds, stops the run with a message that names the parameter and never shows the value;
+* the plan shows the connector role's trust policy, which holds the ExternalIds, as `(sensitive value)`;
+* the token is read as an ephemeral value: it is in neither the plan nor the state, and reaches `curl` through its
+  environment and standard input, never a command line;
+* no output, tag or description holds either.
+
+The ExternalIds are in the state, in the trust policy, and readable in the role by anyone in your account allowed
+`iam:GetRole`. That is unavoidable, and inside your account. At `TF_LOG=DEBUG` the AWS provider logs the responses
+of its AWS calls but an ephemeral read's, so a debug log of this root holds both values: refreshing Part 1's
+parameters reads them decrypted, and the module's read of the ExternalIds and the role's trust policy show the
+ExternalIds. Treat such a log as a secret.
+
+`terraform destroy` deletes the parameters with their values, which is right for an uninstall; know it before you
+destroy the root for another reason.
 
 ### Rotating the ExternalId
 
-1. Apply with both values: `external_ids = [old, new]`. LoopProof's calls keep working with the old one.
+1. Put both values in the parameter, `["<old>","<new>"]`, and apply. LoopProof's calls keep working with the old
+   one.
 2. Wait at least 10 minutes, then tell LoopProof to switch; it now presents the new one.
-3. Apply with the new one only: `external_ids = [new]`.
+3. Put the new one only, `["<new>"]`, and apply.
 
-IAM applies a trust policy change gradually. For a few minutes after step 1, some STS requests still see the old
-policy and refuse the new value, while the old value keeps working throughout. That's why step 2 waits, and why the
-old value stays listed until LoopProof has switched.
+Your Terraform doesn't change: each apply reads the parameter and updates the trust policy in place. IAM applies a
+trust policy change gradually. For a few minutes after step 1, some STS requests still see the old policy and refuse
+the new value, while the old value keeps working throughout. That's why step 2 waits, and why the old value stays
+listed until LoopProof has switched.
 
 ### Registration
 
-With `registration_token` set, the module POSTs the role's ARN and the Region it's applied in to `registration_url`
-once the role exists, with `Authorization: Bearer <token>`. The token comes from LoopProof's onboarding and is valid
-for 24 hours.
+On the apply that creates the connector role, the module POSTs the role's ARN and the Region it's applied in to
+`registration_url`, once, with `curl`, and `Authorization: Bearer <token>` from the token parameter. Later plans and
+applies make no call.
 
 LoopProof reads your Security Hub findings in that Region, the AWS provider's Region where you apply the module:
 Security Hub's home Region, if you install it [where it belongs](#where-to-install-it). An IAM role ARN names no
 Region, so LoopProof can't learn it from the ARN.
 
-* Set it for the first apply, then remove it. When it's `null`, the module makes no call.
-* The call is a data source, so Terraform makes it on **every** plan while the token is set, including the plan of
-  a `destroy`. LoopProof answers `200` to a repeat of the same token with the same ARN, so that is harmless, but a
-  token LoopProof no longer accepts will fail the plan.
-* Any answer but `200` fails the apply with the role's ARN, the Region and a message to paste them into LoopProof
-  instead. The `role_arn` and `region` outputs have them too. The ARN is only a hint: LoopProof proves the account
-  later by assuming the role.
+* **A refused call** (HTTP 4xx, such as an expired token) fails the apply. The error shows LoopProof's answer, says
+  to get a new registration token in LoopProof and put it in the token parameter, and gives the role's ARN and the
+  Region, to paste into LoopProof instead. 4xx answers aren't retried.
+* **Once the new token is in the parameter, apply again.** The failed registration is tainted, so the plain apply
+  registers by itself.
+* **Connection errors and 5xx answers** are retried, four attempts in all, before the apply fails the same way.
+* **The call runs again** when the role is replaced, and with `terraform apply -replace` on
+  `module.<name>.terraform_data.registration`. LoopProof answers `200` for a role it already has.
+* While the call runs, Terraform shows its output as `(output suppressed due to ephemeral value in config)`, because
+  the token is in its environment; when it fails, the error shows everything it printed. It never prints the token.
+
+The ARN is only a hint: LoopProof proves the account later by assuming the role.
+
+### A machine that can't reach LoopProof
+
+The registration needs HTTPS from the machine that runs Terraform to `registration_url`. Without it, the apply
+creates everything else, then fails at the registration with `curl`'s error, the role's ARN and the Region: paste
+those into LoopProof's onboarding, which registers the role without a token. The registration stays tainted, so
+each later apply tries again and fails the same way, until one runs from a machine that can reach LoopProof.
 
 ### Excluding accounts
 
@@ -148,7 +231,7 @@ module "loopproof_connector" {
   `/loopproof/<environment>/excluded-accounts`, in the module's Region; the `excluded_accounts_parameter` output
   names it. The parameter exists, holding `[]`, when you exclude nothing. LoopProof reads it with the connector role
   when it proves your account, and daily after, to keep those accounts out of its scope. The role may read that
-  parameter and nothing else in SSM.
+  parameter and nothing else in SSM: not the ExternalIds' or the token's.
 * A change takes effect on the next apply. Make it as you change the rest of your Terraform, by pull request;
   LoopProof doesn't ask why.
 * IAM can't limit `securityhub:GetFindings` to some accounts, so the connector role can still read an excluded
@@ -162,6 +245,12 @@ your events. EventBridge doesn't retry a permission error; without a dead-letter
 counts it in the rule's `FailedInvocations` metric. Nothing is lost: once the account is proven, LoopProof imports
 your findings' history through the connector role. You don't need to debug those failures.
 
+### Upgrading from 0.3.0
+
+This release takes the two parameters' ARNs in place of `external_ids` and `registration_token`, and drops the
+`registered` output and the `hashicorp/http` provider. See
+[Upgrading](https://infrahouse.github.io/terraform-aws-loopproof-connector/upgrading/).
+
 ## Documentation
 
 Full documentation is at [infrahouse.github.io/terraform-aws-loopproof-connector](https://infrahouse.github.io/terraform-aws-loopproof-connector/):
@@ -171,12 +260,13 @@ Full documentation is at [infrahouse.github.io/terraform-aws-loopproof-connector
 * [Configuration](https://infrahouse.github.io/terraform-aws-loopproof-connector/configuration/)
 * [Security](https://infrahouse.github.io/terraform-aws-loopproof-connector/security/)
 * [Troubleshooting](https://infrahouse.github.io/terraform-aws-loopproof-connector/troubleshooting/)
+* [Upgrading](https://infrahouse.github.io/terraform-aws-loopproof-connector/upgrading/)
 
 ## Requirements
 
-* Terraform `~> 1.5`
-* AWS provider `~> 6.0`
-* HTTP provider `~> 3.5`
+* Terraform `>= 1.10` for the module, and `>= 1.11` for Part 1's write-only placeholder
+* AWS provider `>= 6.0`
+* `curl`, on Linux or macOS, with HTTPS access to LoopProof's API from the machine that runs Terraform
 * Security Hub (the OCSF-based version, not Security Hub CSPM alone) enabled in the account and Region
 
 ## Usage

@@ -1,38 +1,67 @@
 # Examples
 
-## ExternalId from SSM Parameter Store
+## The install, in two parts
+
+Part 1 creates the parameters that hold the ExternalIds and the registration token; Part 2 is the module call, with
+their ARNs. Both go in one root:
 
 ```hcl
-data "aws_ssm_parameter" "loopproof_external_id" {
-  name = "/loopproof/external-id"
+resource "aws_ssm_parameter" "loopproof_external_ids" {
+  name             = "/loopproof/production/external-ids"
+  description      = "ExternalIds that LoopProof presents to the connector role, as a JSON list."
+  type             = "SecureString"
+  value_wo         = "unset"
+  value_wo_version = 1
+}
+
+resource "aws_ssm_parameter" "loopproof_registration_token" {
+  name             = "/loopproof/production/registration-token"
+  description      = "Registration token from LoopProof's onboarding."
+  type             = "SecureString"
+  value_wo         = "unset"
+  value_wo_version = 1
 }
 
 module "loopproof_connector" {
   source  = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
   version = "0.3.0"
 
-  environment              = "production"
-  control_plane_account_id = "123456789012"
-  external_ids             = [data.aws_ssm_parameter.loopproof_external_id.value]
-  event_bus_arn            = "arn:aws:events:us-west-1:123456789012:event-bus/loopproof-production-findings"
-  registration_url         = "https://api.loopproof.ai/connector/registrations"
+  environment                      = "production"
+  control_plane_account_id         = "123456789012"
+  external_ids_parameter_arn       = aws_ssm_parameter.loopproof_external_ids.arn
+  registration_token_parameter_arn = aws_ssm_parameter.loopproof_registration_token.arn
+  event_bus_arn                    = "arn:aws:events:us-west-1:123456789012:event-bus/loopproof-production-findings"
+  registration_url                 = "https://api.loopproof.ai/connector/registrations"
 }
 ```
 
-A runnable version is in [examples/basic](https://github.com/infrahouse/terraform-aws-loopproof-connector/tree/main/examples/basic).
+Apply, fill both parameters, apply again: see [Getting Started](getting-started.md#first-deployment). A runnable
+version is in [examples/basic](https://github.com/infrahouse/terraform-aws-loopproof-connector/tree/main/examples/basic).
 
-## ExternalId from Secrets Manager
+## Parameters you manage another way
+
+Skip Part 1 and pass the ARNs of your own SecureString parameters, in the account and Region of the AWS provider:
 
 ```hcl
-data "aws_secretsmanager_secret_version" "loopproof_external_id" {
-  secret_id = "loopproof/external-id"
-}
-
 module "loopproof_connector" {
   # ...
-  external_ids = [data.aws_secretsmanager_secret_version.loopproof_external_id.secret_string]
+  external_ids_parameter_arn       = "arn:aws:ssm:us-east-1:111122223333:parameter/security/external-ids"
+  registration_token_parameter_arn = "arn:aws:ssm:us-east-1:111122223333:parameter/security/loopproof-token"
 }
 ```
+
+The ExternalIds' parameter must hold a JSON list, such as `["<ExternalId>"]`.
+
+## A customer-managed key
+
+```hcl
+resource "aws_ssm_parameter" "loopproof_external_ids" {
+  # ...
+  key_id = aws_kms_key.loopproof.arn
+}
+```
+
+Whoever applies the root then needs `kms:Decrypt` on the key, and the fill commands need `--key-id` with it.
 
 ## Forward Medium findings too
 
@@ -59,22 +88,33 @@ LoopProof reads. Set `excluded_accounts = []`, or remove it, to include the acco
 
 ## Rotating the ExternalId
 
-Store the new value next to the old one, then:
+The Terraform doesn't change; the parameter does.
 
-```hcl
-# 1. Both values: LoopProof's calls keep working with the old one.
-external_ids = [
-  data.aws_ssm_parameter.loopproof_external_id_old.value,
-  data.aws_ssm_parameter.loopproof_external_id_new.value,
-]
-```
+1. Put both values in the parameter, and apply. LoopProof's calls keep working with the old one.
+
+    ```bash
+    printf 'Old ExternalId: ' >&2; stty -echo; read -r old; stty echo; printf '\n' >&2
+    printf 'New ExternalId: ' >&2; stty -echo; read -r new; stty echo; printf '\n' >&2
+    printf '["%s","%s"]' "$old" "$new" | aws ssm put-parameter --overwrite --type SecureString \
+      --name /loopproof/production/external-ids --value file:///dev/stdin; unset old new
+    terraform apply
+    ```
 
 2. Wait at least 10 minutes, then tell LoopProof to switch to the new value.
 
-```hcl
-# 3. The new value only.
-external_ids = [data.aws_ssm_parameter.loopproof_external_id_new.value]
-```
+3. Put the new value only, and apply.
 
-Neither apply replaces the role: Terraform updates its trust policy in place. The wait in step 2 is for IAM: for a
-few minutes after the first apply, STS still refuses the new value now and then.
+    ```bash
+    printf 'New ExternalId: ' >&2; stty -echo; read -r new; stty echo; printf '\n' >&2
+    printf '["%s"]' "$new" | aws ssm put-parameter --overwrite --type SecureString \
+      --name /loopproof/production/external-ids --value file:///dev/stdin; unset new
+    terraform apply
+    ```
+
+Neither apply replaces the role: Terraform updates its trust policy in place, and the role doesn't register again.
+The wait in step 2 is for IAM: for a few minutes after the first apply, STS still refuses the new value now and then.
+
+## Registering again
+
+`terraform apply -replace=module.loopproof_connector.terraform_data.registration` makes the registration call once
+more, with the token in the parameter. LoopProof answers `200` for a role it already has.

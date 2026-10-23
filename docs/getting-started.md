@@ -3,12 +3,16 @@
 ## Prerequisites
 
 * Security Hub (the OCSF-based Security Hub, which emits "Findings Imported V2" events) enabled.
-* Terraform `~> 1.5`, with the AWS provider `~> 6.0`. The module also uses the `hashicorp/http` provider; Terraform
-  installs it for you.
+* Terraform `>= 1.11` for the root below (the module itself needs `>= 1.10`), with the AWS provider `>= 6.0`.
+* A Linux or macOS machine to run Terraform, with `curl` and HTTPS access to LoopProof's API. Windows isn't
+  supported. Without access to the API, see
+  [A machine that can't reach LoopProof](#a-machine-that-cant-reach-loopproof).
+* The AWS CLI, to fill the parameters.
 * Credentials for the account and Region described below, allowed to manage IAM roles, EventBridge rules and SSM
-  parameters.
-* The module call from LoopProof's onboarding, the ExternalId, and a registration token (`lprt_…`). The token is
-  valid for 24 hours.
+  parameters, and `ssm:GetParameter` on `/loopproof/<environment>/*`; see
+  [Security](security.md#permissions-for-whoever-applies-it).
+* The two parts of Terraform from LoopProof's onboarding, and the ExternalId and registration token (`lprt_…`) it
+  shows you once. The token is valid for 24 hours.
 
 ## Where to install it
 
@@ -24,48 +28,86 @@ linked Region, and `GetFindingsV2` can read them all.
 
 ## First deployment
 
-1. **Store the ExternalId.** Put it in your own parameter store, for example as an SSM `SecureString` parameter:
-
-    ```bash
-    aws ssm put-parameter --name /loopproof/external-id --type SecureString --value '<ExternalId>'
-    ```
-
-2. **Add the module call** LoopProof generated, reading the ExternalId from the parameter:
+1. **Add both parts to one root.** Part 1 creates the two SSM SecureString parameters with the write-only placeholder
+   `unset`; Part 2 calls the module with their ARNs:
 
     ```hcl
-    data "aws_ssm_parameter" "loopproof_external_id" {
-      name = "/loopproof/external-id"
+    resource "aws_ssm_parameter" "loopproof_external_ids" {
+      name             = "/loopproof/production/external-ids"
+      description      = "ExternalIds that LoopProof presents to the connector role, as a JSON list."
+      type             = "SecureString"
+      value_wo         = "unset"
+      value_wo_version = 1
+    }
+
+    resource "aws_ssm_parameter" "loopproof_registration_token" {
+      name             = "/loopproof/production/registration-token"
+      description      = "Registration token from LoopProof's onboarding."
+      type             = "SecureString"
+      value_wo         = "unset"
+      value_wo_version = 1
     }
 
     module "loopproof_connector" {
       source  = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
       version = "0.3.0"
 
-      environment              = "production"
-      control_plane_account_id = "123456789012"
-      external_ids             = [data.aws_ssm_parameter.loopproof_external_id.value]
-      event_bus_arn            = "arn:aws:events:us-west-1:123456789012:event-bus/loopproof-production-findings"
-      registration_url         = "https://api.loopproof.ai/connector/registrations"
-      registration_token       = var.loopproof_registration_token
-    }
-
-    variable "loopproof_registration_token" {
-      type      = string
-      sensitive = true
-      default   = null
+      environment                      = "production"
+      control_plane_account_id         = "123456789012"
+      external_ids_parameter_arn       = aws_ssm_parameter.loopproof_external_ids.arn
+      registration_token_parameter_arn = aws_ssm_parameter.loopproof_registration_token.arn
+      event_bus_arn                    = "arn:aws:events:us-west-1:123456789012:event-bus/loopproof-production-findings"
+      registration_url                 = "https://api.loopproof.ai/connector/registrations"
     }
     ```
 
-3. **Apply with the token**, without writing it to a file:
+    The placeholder is write-only, so Terraform never stores the value or compares it, and never writes it again.
+
+2. **Apply.** It creates the two parameters, then stops with an error that names the parameter to fill:
+
+    ```text
+    Error: Resource postcondition failed
+
+    The SSM parameter
+    arn:aws:ssm:us-east-1:111122223333:parameter/loopproof/production/external-ids
+    still holds the placeholder "unset".
+    Put the ExternalId from LoopProof's onboarding in it, as a JSON list such as
+    ["<ExternalId>"], and apply again.
+    ```
+
+    Applying with `-target` on the two parameters creates them without the error.
+
+3. **Fill both parameters.** Each command asks for the value without echoing it and passes it to the AWS CLI on its
+   standard input, so it is on no command line and in no shell history:
 
     ```bash
-    TF_VAR_loopproof_registration_token='lprt_…' terraform apply
+    printf 'ExternalId: ' >&2; stty -echo; read -r value; stty echo; printf '\n' >&2
+    printf '["%s"]' "$value" | aws ssm put-parameter --overwrite --type SecureString \
+      --name /loopproof/production/external-ids --value file:///dev/stdin; unset value
     ```
 
-    The `registered` output is `true` once LoopProof accepted the role. If the call failed, the error shows the
-    role's ARN and the Region: paste them into LoopProof's onboarding.
+    ```bash
+    printf 'Registration token: ' >&2; stty -echo; read -r value; stty echo; printf '\n' >&2
+    printf '%s' "$value" | aws ssm put-parameter --overwrite --type SecureString \
+      --name /loopproof/production/registration-token --value file:///dev/stdin; unset value
+    ```
 
-4. **Apply again without the token.** The module stops calling LoopProof, and `registered` becomes `null`.
+    Use the account and Region of step 2. With a customer-managed KMS key on the parameters, add `--key-id` with it:
+    without it, SSM re-encrypts the value with `aws/ssm`.
+
+4. **Apply again.** It creates the connector and registers the role with LoopProof, once. If LoopProof refuses the
+   token, the apply fails and says what to do; see
+   [Troubleshooting](troubleshooting.md#the-apply-fails-with-loopproof-refused-the-connector-registration).
 
 5. **Finish onboarding in LoopProof.** It proves the account by assuming the role. Until then, LoopProof's bus
    refuses your events; see [Troubleshooting](troubleshooting.md#eventbridge-reports-failed-invocations).
+
+Later plans and applies read the parameters but never call LoopProof. Keep both parameters: the module reads them on
+every plan.
+
+## A machine that can't reach LoopProof
+
+The registration needs HTTPS from the machine that runs Terraform to `registration_url`. Without it, step 4 creates
+everything else, then fails at the registration with `curl`'s error, the role's ARN and the Region. Paste those into
+LoopProof's onboarding: that registers the role without a token. The registration stays tainted, so each later apply
+tries again and fails the same way, until one runs from a machine that can reach LoopProof.

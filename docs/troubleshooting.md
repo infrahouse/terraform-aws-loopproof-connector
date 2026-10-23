@@ -13,31 +13,57 @@ once your account is proven, LoopProof imports the history of your findings thro
 If the failures continue after LoopProof shows the account as connected, check that `event_bus_arn` and
 `control_plane_account_id` match what onboarding generated, and contact LoopProof.
 
-## The apply fails with "LoopProof did not accept the connector registration"
+## The apply fails with "still holds the placeholder"
 
-The registration call got an answer other than `200`. The role and the forwarding were still created.
+A parameter still holds `unset`, what Part 1 creates it with. Fill it, then apply again:
 
-* Paste the role ARN and the Region from the error (or the module's `role_arn` and `region` outputs) into LoopProof's
+* the ExternalIds' parameter fails at plan or apply, before the connector role exists. Put the ExternalId in it, as a
+  JSON list such as `["<ExternalId>"]`;
+* the token's parameter fails at the registration, after the role is created. Put the registration token in it.
+
+See [Getting Started](getting-started.md#first-deployment) for the commands. On the first apply of a new root, the
+ExternalIds' error is expected: the parameters didn't exist until that apply.
+
+## The apply fails with "must hold a JSON list of one ExternalId"
+
+The ExternalIds' parameter holds something else: not JSON, a JSON string instead of a list, an empty list, three
+values, the same value twice, or a value that isn't 43 characters of `A-Z`, `a-z`, `0-9`, `_` or `-`. The message
+doesn't show the value; read it with `aws ssm get-parameter --with-decryption` and put it back as `["<ExternalId>"]`,
+or `["<old>","<new>"]` during a rotation.
+
+## The apply fails with "LoopProof refused the connector registration"
+
+LoopProof answered the registration with a 4xx. The role and the forwarding were created; only the registration
+failed, and it is tainted.
+
+* A `401` usually means the token expired (it's valid for 24 hours), was replaced by a newer one, or registered
+  nothing before the tenant was provisioned. A `409` means the token already registered another role.
+* Get a new registration token in LoopProof, put it in the token parameter, and run a plain `terraform apply`: the
+  tainted registration runs again by itself.
+* Or paste the role ARN and the Region from the error, or the `role_arn` and `region` outputs, into LoopProof's
   onboarding.
-* Remove `registration_token` from the module call and apply again.
 
-A `401` or `403` usually means the token expired (it's valid for 24 hours) or was already used for another role.
+## The apply fails with "didn't answer" or a 5xx
 
-## Plans fail days after the installation
+The registration got no answer (DNS, a proxy, a firewall, a timeout) or LoopProof answered 5xx, four times. Apply
+again once `registration_url` is reachable from the machine that runs Terraform, or paste the role ARN and the Region
+into LoopProof. From a machine that can never reach LoopProof, each apply fails the same way; see
+[A machine that can't reach LoopProof](getting-started.md#a-machine-that-cant-reach-loopproof).
 
-If `registration_token` is still set, every plan calls LoopProof again, and fails once LoopProof no longer accepts
-the token. Remove `registration_token`; the role stays registered.
+## The apply fails with "registers the connector role with curl, which isn't on PATH"
 
-## The apply fails with "Error making request"
+Install `curl` on the machine that runs Terraform, and apply again. Windows isn't supported.
 
-The registration call didn't get an answer: DNS, a proxy or a firewall. Apply again once
-`registration_url` is reachable from the machine that runs Terraform, or paste `role_arn` and `region` into LoopProof
-and remove the token.
+## The plan fails with ParameterNotFound or AccessDeniedException
+
+The module reads both parameters on every plan. Check that they still exist, in the account and Region of the AWS
+provider, and that your credentials allow `ssm:GetParameter` on them, and `kms:Decrypt` with a customer-managed key;
+see [Security](security.md#permissions-for-whoever-applies-it).
 
 ## LoopProof reports AccessDenied when it assumes the role
 
-* The ExternalId in your parameter store isn't the one LoopProof holds. During a rotation, keep both values until
-  LoopProof has switched.
+* The ExternalIds' parameter doesn't hold the value LoopProof holds. During a rotation, keep both values until
+  LoopProof has switched, and apply after each change: the trust policy changes only on apply.
 * `environment` or `control_plane_account_id` doesn't match LoopProof's environment. The trust policy only accepts
   the roles `loopproof-<environment>-*` of that account.
 * IAM applies a trust policy change gradually: for a few minutes after an apply, STS may refuse a newly added

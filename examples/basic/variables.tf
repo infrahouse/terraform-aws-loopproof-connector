@@ -3,12 +3,6 @@ variable "region" {
   description = "Security Hub's home Region."
 }
 
-variable "external_id_parameter" {
-  type        = string
-  description = "Name of the SSM parameter (SecureString) that holds LoopProof's ExternalId."
-  default     = "/loopproof/external-id"
-}
-
 variable "environment" {
   type        = string
   description = "LoopProof's environment, from the generated module call."
@@ -33,11 +27,4 @@ variable "excluded_accounts" {
   type        = list(string)
   description = "AWS accounts to keep out of LoopProof, such as an account outside your audit scope."
   default     = []
-}
-
-variable "registration_token" {
-  type        = string
-  description = "One-time registration token from LoopProof's onboarding. Set it for the first apply only."
-  sensitive   = true
-  default     = null
 }
