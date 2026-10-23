@@ -1,6 +1,7 @@
 # Configuration
 
-LoopProof's onboarding fills in every input except the credentials, which you feed in from your own store.
+LoopProof's onboarding fills in every input. The ExternalIds and the registration token aren't inputs: the module
+reads them from two SSM parameters, whose ARNs are.
 
 ## Inputs
 
@@ -14,11 +15,28 @@ that may assume the connector role (`loopproof-<environment>-*`).
 
 LoopProof's control-plane account for that environment. Twelve digits.
 
-### `external_ids`
+### `external_ids_parameter_arn`
 
-**Sensitive.** The ExternalIds LoopProof presents when it assumes the role: one value, or two during a
-[rotation](security.md#rotating-the-externalid). Each is 43 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`. Validation
-messages never echo the values.
+The ARN of the SSM SecureString parameter that holds the ExternalIds LoopProof presents when it assumes the role, as a
+JSON list: one value, or two during a [rotation](security.md#rotating-the-externalid), such as `["<ExternalId>"]`.
+Pass `aws_ssm_parameter.<name>.arn` from Part 1, or the ARN of a parameter you manage another way.
+
+The module reads it with a data source, decrypted, on every plan and apply. Before using the value, it checks it, and
+fails the run with a message that names the parameter and never shows the value:
+
+* the placeholder `unset`: "still holds the placeholder";
+* anything but a JSON list of one or two ExternalIds, each 43 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`, none
+  twice.
+
+The validation message for a value that isn't an SSM parameter ARN doesn't repeat it; Terraform shows the value it
+was given beside the message, as for any input that isn't sensitive.
+
+### `registration_token_parameter_arn`
+
+The ARN of the SSM SecureString parameter that holds the registration token (`lprt_…`) from LoopProof's onboarding.
+The module reads it as an ephemeral value, so the token is in neither the plan nor the state, and uses it for the one
+[registration](#registration). The registration fails, naming the parameter, if it holds the placeholder `unset` or
+something that doesn't look like a token. Validated as an SSM parameter ARN like `external_ids_parameter_arn`.
 
 ### `event_bus_arn`
 
@@ -31,11 +49,6 @@ LoopProof's registration endpoint, such as `https://api.staging.loopproof.ai/con
 POSTs the role's ARN and the Region it's applied in there; see [Registration](#registration). It must use
 `https://`, without credentials in the URL; `http://` is accepted only for `127.0.0.1` and `localhost`, which the
 module's tests use.
-
-### `registration_token`
-
-**Sensitive**, default `null`. The one-time token (`lprt_…`) from LoopProof's onboarding, valid for 24 hours. Set it
-for the first apply, then remove it. With `null`, the module makes no call. See [Registration](#registration).
 
 ### `severities`
 
@@ -74,44 +87,43 @@ excluded_accounts = ["111122223333", "444455556666"]
 | `region` | The module's Region, where LoopProof reads the findings. Paste it with `role_arn` if registration failed. |
 | `role_name` | `loopproof-<environment>-connector` |
 | `event_rule_arn` | ARN of the EventBridge rule |
-| `registered` | `true` once LoopProof accepted the registration, `null` without a token |
 | `excluded_accounts_parameter` | `/loopproof/<environment>/excluded-accounts`, which publishes `excluded_accounts` |
 
-No output contains an ExternalId or the token.
+No output contains an ExternalId or the token. 0.3.0's `registered` output is gone: an apply that finishes has
+registered the role, since a refused registration fails it.
 
 ## Registration
 
-The module reports the role's ARN and the AWS provider's Region with the `hashicorp/http` data source, so the machine
-running Terraform needs no `curl` or other binary. LoopProof reads your Security Hub findings in that Region; an IAM
-role ARN names no Region, so the call carries it. Data sources are read on every plan, so while
-`registration_token` is set:
+The module reports the role's ARN and the AWS provider's Region to `registration_url`, once: when its
+`terraform_data.registration` resource is created, on the apply that creates the role. A `local-exec` provisioner
+runs `files/register.sh` with `/bin/sh`, which POSTs `{"role_arn": "...", "region": "..."}` with `curl`. LoopProof
+reads your Security Hub findings in that Region; an IAM role ARN names no Region, so the call carries it.
 
-* every `plan`, `apply` and `destroy` POSTs the same request again. LoopProof answers `200` to a repeat of the same
-  token with the same ARN, so that's harmless;
-* if LoopProof stops accepting the token, for example after it expires, the plan fails. Remove the token.
+* The token reaches the script through the provisioner's environment, from the ephemeral read, and `curl` through
+  its standard input; it is on no command line, in the plan or in the state.
+* `curl -sS --fail-with-body --max-time 30`. The script checks `command -v curl` first and fails with a plain
+  message if it's missing.
+* A 2xx answer registers. A 4xx fails at once; connection errors, timeouts and 5xx answers are tried again, four
+  attempts in all, two, four and eight seconds apart.
+* Later plans and applies make no call. The call runs again when the role is replaced, and with
+  `terraform apply -replace=module.<name>.terraform_data.registration`.
+* A failed call fails the apply and leaves the resource tainted, so the next plain apply calls again.
 
-On the first apply, the plan shows the call as `will be read during apply`, with the `Authorization` header as
-`(sensitive value)`. The apply prints only the URL:
+While the script runs, Terraform shows its output as `(output suppressed due to ephemeral value in config)`, because
+its environment holds the token. When it fails, the error shows all it printed, and never the request or the token:
 
 ```text
-module.loopproof_connector.data.http.registration[0]: Reading...
-module.loopproof_connector.data.http.registration[0]: Read complete after 0s [id=https://api.loopproof.ai/connector/registrations]
-```
+Error: local-exec provisioner error
 
-Any answer but `200` fails the run:
-
-```text
-Error: Resource postcondition failed
-
-LoopProof did not accept the connector registration (HTTP 401).
-Paste the connector role ARN and the Region into LoopProof's onboarding instead:
+Error running command '.terraform/modules/loopproof_connector/files/register.sh':
+exit status 1. Output: LoopProof refused the connector registration: HTTP/2 401
+LoopProof's answer: {"detail": "..."}
+Get a new registration token in LoopProof and put it in the SSM parameter
+arn:aws:ssm:us-east-1:111122223333:parameter/loopproof/production/registration-token, then apply again.
+Or paste the connector role ARN and the Region into LoopProof's onboarding:
 Role ARN: arn:aws:iam::111122223333:role/loopproof-production-connector
 Region: us-east-1
-Then remove registration_token from the module call and apply again.
 ```
-
-The module doesn't retry: a retry that runs out ends with the provider's own error, without that message. A network
-error fails the run with the provider's error; apply again, or paste `role_arn` and `region`.
 
 ## Tags
 

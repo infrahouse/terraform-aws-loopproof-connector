@@ -1,12 +1,12 @@
 # Examples
 
-* [basic](basic/): the module call LoopProof's onboarding generates, with the ExternalId read from SSM Parameter
-  Store.
+* [basic](basic/): the two parts LoopProof's onboarding generates, in one root: the SSM parameters that hold the
+  ExternalIds and the registration token, and the module call with their ARNs.
 
 ```bash
 cd examples/basic
 terraform init
-TF_VAR_registration_token=lprt_... terraform apply \
+terraform apply \
   -var region=us-east-1 \
   -var environment=production \
   -var control_plane_account_id=123456789012 \
@@ -14,7 +14,9 @@ TF_VAR_registration_token=lprt_... terraform apply \
   -var registration_url=https://api.loopproof.ai/connector/registrations
 ```
 
-Apply again without `TF_VAR_registration_token` afterwards: the token is single-use and expires in 24 hours.
+The first apply creates the two parameters and stops: they hold the placeholder `unset`. Fill them with the commands
+in the [README](../README.md#filling-the-parameters), then apply again with the same variables. That apply creates
+the connector and registers it with LoopProof, once.
 
 To keep an account's findings out of LoopProof, add `-var 'excluded_accounts=["111122223333"]'`; any later apply can
 change the list.
