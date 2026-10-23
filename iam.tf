@@ -21,7 +21,7 @@ data "aws_iam_policy_document" "connector_trust" {
     condition {
       test     = "StringEquals"
       variable = "sts:ExternalId"
-      values   = var.external_ids
+      values   = local.external_ids
     }
   }
 }
@@ -84,8 +84,8 @@ data "aws_iam_policy_document" "connector_permissions" {
 resource "aws_iam_role" "connector" {
   name        = local.connector_role_name
   description = "Lets LoopProof ${var.environment} read Security Hub findings and set their status and comment."
-  # The trust policy holds the ExternalIds. Terraform doesn't carry the variable's sensitivity into the
-  # policy document's JSON, so mark it here to keep the ExternalIds out of plan output.
+  # The trust policy holds the ExternalIds. Terraform doesn't carry the parameter value's sensitivity into
+  # the policy document's JSON, so mark it here to keep the ExternalIds out of plan output.
   assume_role_policy = sensitive(data.aws_iam_policy_document.connector_trust.json)
 
   tags = merge(

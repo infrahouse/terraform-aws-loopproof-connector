@@ -12,6 +12,13 @@ locals {
   rule_name                        = "loopproof-${var.environment}-findings"
   excluded_accounts_parameter_name = "/loopproof/${var.environment}/excluded-accounts"
 
+  # What Part 1 of the install creates both of the tenant's parameters with, until the tenant fills them.
+  placeholder = "unset"
+
+  # Decoded only after the read's checks have passed (external_ids.tf), so the placeholder or a malformed
+  # value fails there, with a message that names the parameter, never here.
+  external_ids = tolist(jsondecode(data.aws_ssm_parameter.external_ids.value))
+
   # Sorted, so that reordering the list changes neither the rule nor the parameter.
   excluded_accounts = sort(var.excluded_accounts)
 
@@ -57,9 +64,6 @@ locals {
   excluded_accounts_filter = length(local.excluded_accounts) > 0 ? [
     { cloud = { account = { uid = [{ "anything-but" = local.excluded_accounts }] } } }
   ] : []
-
-  # count can't use a sensitive value; whether a token was given is not itself a secret.
-  register = nonsensitive(var.registration_token != null)
 
   tags = {
     created_by_module     = local.module_name
