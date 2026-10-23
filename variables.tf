@@ -29,33 +29,52 @@ variable "control_plane_account_id" {
   }
 }
 
-variable "external_ids" {
-  type        = list(string)
-  sensitive   = true
+variable "external_ids_parameter_arn" {
+  type        = string
+  nullable    = false
   description = <<-EOT
-    ExternalIds that LoopProof presents when it assumes the connector role. One value normally,
-    two during a rotation. LoopProof generates them; feed them from your own parameter store and
-    never commit them.
+    ARN of the SSM SecureString parameter that holds the ExternalIds LoopProof presents when it assumes the
+    connector role, as a JSON list: one value, or two during a rotation. Pass the ARN of the parameter your
+    root creates, aws_ssm_parameter.<name>.arn, never the value. The module reads it with the AWS
+    provider's credentials. Until you fill it, it holds the placeholder "unset", and the apply stops there.
   EOT
 
-  # The error messages don't echo the values: they are credentials.
+  # The message doesn't echo the value: whatever was passed by mistake may be a credential.
   validation {
-    condition     = length(var.external_ids) >= 1 && length(var.external_ids) <= 2
-    error_message = "external_ids must hold one ExternalId, or two during a rotation."
-  }
-
-  validation {
-    condition = alltrue([
-      for external_id in var.external_ids : can(regex("^[A-Za-z0-9_-]{43}$", external_id))
-    ])
+    condition = can(regex(
+      "^arn:aws(-[a-z]+)*:ssm:[a-z]{2}(-[a-z]+)+-[0-9]+:[0-9]{12}:parameter/[A-Za-z0-9_./-]+$",
+      var.external_ids_parameter_arn
+    ))
     error_message = <<-EOT
-      Each ExternalId must be exactly 43 characters of A-Z, a-z, 0-9, "_" or "-", as LoopProof issued it.
+      external_ids_parameter_arn must be the ARN of an SSM parameter, such as
+      arn:aws:ssm:us-east-1:111122223333:parameter/loopproof/production/external-ids.
+      Pass the parameter's ARN, aws_ssm_parameter.<name>.arn, not its name or its value.
     EOT
   }
+}
 
+variable "registration_token_parameter_arn" {
+  type        = string
+  nullable    = false
+  description = <<-EOT
+    ARN of the SSM SecureString parameter that holds the registration token (lprt_...) from LoopProof's
+    onboarding. Pass the ARN of the parameter your root creates, aws_ssm_parameter.<name>.arn, never the
+    value. The module reads it as an ephemeral value, so the token is in neither the plan nor the state, and
+    uses it once: on the apply that creates the connector role, it reports the role's ARN and the Region to
+    registration_url.
+  EOT
+
+  # The message doesn't echo the value: whatever was passed by mistake may be the token.
   validation {
-    condition     = length(distinct(var.external_ids)) == length(var.external_ids)
-    error_message = "external_ids must not repeat a value. During a rotation, list the old and the new ExternalId."
+    condition = can(regex(
+      "^arn:aws(-[a-z]+)*:ssm:[a-z]{2}(-[a-z]+)+-[0-9]+:[0-9]{12}:parameter/[A-Za-z0-9_./-]+$",
+      var.registration_token_parameter_arn
+    ))
+    error_message = <<-EOT
+      registration_token_parameter_arn must be the ARN of an SSM parameter, such as
+      arn:aws:ssm:us-east-1:111122223333:parameter/loopproof/production/registration-token.
+      Pass the parameter's ARN, aws_ssm_parameter.<name>.arn, not its name or its value.
+    EOT
   }
 }
 
@@ -93,27 +112,6 @@ variable "registration_url" {
     error_message = <<-EOT
       registration_url must be an https:// URL (http:// only for 127.0.0.1 or localhost).
       Got: "${var.registration_url}"
-    EOT
-  }
-}
-
-variable "registration_token" {
-  type        = string
-  sensitive   = true
-  default     = null
-  description = <<-EOT
-    One-time registration token (lprt_...) from LoopProof's onboarding, valid for 24 hours.
-    When set, the module reports the connector role's ARN and the Region it is applied in to
-    registration_url: LoopProof reads Security Hub's findings in that Region, which an ARN doesn't name.
-    Set it for the first apply and remove it afterwards. When null, the module makes no call.
-  EOT
-
-  validation {
-    # The message doesn't echo the value: it is a credential.
-    condition     = var.registration_token == null ? true : can(regex("^lprt_\\S+$", var.registration_token))
-    error_message = <<-EOT
-      registration_token must start with "lprt_" and contain no whitespace.
-      Copy it from LoopProof's onboarding.
     EOT
   }
 }

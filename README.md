@@ -187,16 +187,15 @@ Full documentation is at [infrahouse.github.io/terraform-aws-loopproof-connector
 
 | Name | Version |
 |------|---------|
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | ~> 1.5 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.0 |
-| <a name="requirement_http"></a> [http](#requirement\_http) | ~> 3.5 |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.10 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 6.0 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.0 |
-| <a name="provider_http"></a> [http](#provider\_http) | ~> 3.5 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0 |
+| <a name="provider_terraform"></a> [terraform](#provider\_terraform) | n/a |
 
 ## Modules
 
@@ -214,6 +213,7 @@ No modules.
 | [aws_iam_role_policy.connector_excluded_accounts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy.forwarder](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_ssm_parameter.excluded_accounts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ssm_parameter) | resource |
+| [terraform_data.registration](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
 | [aws_iam_policy_document.connector_excluded_accounts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.connector_permissions](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
@@ -222,7 +222,7 @@ No modules.
 | [aws_iam_policy_document.forwarder_trust](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
-| [http_http.registration](https://registry.terraform.io/providers/hashicorp/http/latest/docs/data-sources/http) | data source |
+| [aws_ssm_parameter.external_ids](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
 
 ## Inputs
 
@@ -232,8 +232,8 @@ No modules.
 | <a name="input_environment"></a> [environment](#input\_environment) | LoopProof's environment, such as staging or production. It names the connector role<br/>(loopproof-<environment>-connector) and selects the control-plane roles allowed to assume it<br/>(loopproof-<environment>-*). | `string` | n/a | yes |
 | <a name="input_event_bus_arn"></a> [event\_bus\_arn](#input\_event\_bus\_arn) | ARN of LoopProof's control-plane EventBridge bus that receives the forwarded findings. | `string` | n/a | yes |
 | <a name="input_excluded_accounts"></a> [excluded\_accounts](#input\_excluded\_accounts) | IDs of the AWS accounts you exclude from LoopProof, such as an account outside your audit scope or a<br/>decommissioned one. The forwarding rule drops their findings, so they never leave this account, and the<br/>module publishes the list in the SSM parameter /loopproof/<environment>/excluded-accounts, where LoopProof<br/>reads it. A change takes effect on the next apply. | `list(string)` | `[]` | no |
-| <a name="input_external_ids"></a> [external\_ids](#input\_external\_ids) | ExternalIds that LoopProof presents when it assumes the connector role. One value normally,<br/>two during a rotation. LoopProof generates them; feed them from your own parameter store and<br/>never commit them. | `list(string)` | n/a | yes |
-| <a name="input_registration_token"></a> [registration\_token](#input\_registration\_token) | One-time registration token (lprt\_...) from LoopProof's onboarding, valid for 24 hours.<br/>When set, the module reports the connector role's ARN and the Region it is applied in to<br/>registration\_url: LoopProof reads Security Hub's findings in that Region, which an ARN doesn't name.<br/>Set it for the first apply and remove it afterwards. When null, the module makes no call. | `string` | `null` | no |
+| <a name="input_external_ids_parameter_arn"></a> [external\_ids\_parameter\_arn](#input\_external\_ids\_parameter\_arn) | ARN of the SSM SecureString parameter that holds the ExternalIds LoopProof presents when it assumes the<br/>connector role, as a JSON list: one value, or two during a rotation. Pass the ARN of the parameter your<br/>root creates, aws\_ssm\_parameter.<name>.arn, never the value. The module reads it with the AWS<br/>provider's credentials. Until you fill it, it holds the placeholder "unset", and the apply stops there. | `string` | n/a | yes |
+| <a name="input_registration_token_parameter_arn"></a> [registration\_token\_parameter\_arn](#input\_registration\_token\_parameter\_arn) | ARN of the SSM SecureString parameter that holds the registration token (lprt\_...) from LoopProof's<br/>onboarding. Pass the ARN of the parameter your root creates, aws\_ssm\_parameter.<name>.arn, never the<br/>value. The module reads it as an ephemeral value, so the token is in neither the plan nor the state, and<br/>uses it once: on the apply that creates the connector role, it reports the role's ARN and the Region to<br/>registration\_url. | `string` | n/a | yes |
 | <a name="input_registration_url"></a> [registration\_url](#input\_registration\_url) | LoopProof's connector registration endpoint, such as<br/>https://api.staging.loopproof.ai/connector/registrations. The module POSTs the connector<br/>role's ARN and the Region it is applied in there. It must use https://;<br/>http:// is accepted only for 127.0.0.1 and localhost, for tests. | `string` | n/a | yes |
 | <a name="input_severities"></a> [severities](#input\_severities) | Severities of the Security Hub findings to forward, as they appear in the OCSF severity field:<br/>Unknown, Informational, Low, Medium, High, Critical, Fatal or Other. | `list(string)` | <pre>[<br/>  "High",<br/>  "Critical",<br/>  "Fatal"<br/>]</pre> | no |
 
@@ -243,9 +243,8 @@ No modules.
 |------|-------------|
 | <a name="output_event_rule_arn"></a> [event\_rule\_arn](#output\_event\_rule\_arn) | ARN of the EventBridge rule that forwards Security Hub findings to LoopProof. |
 | <a name="output_excluded_accounts_parameter"></a> [excluded\_accounts\_parameter](#output\_excluded\_accounts\_parameter) | Name of the SSM parameter that publishes excluded\_accounts to LoopProof, /loopproof/<environment>/excluded-accounts. |
-| <a name="output_region"></a> [region](#output\_region) | Region the module is applied in, where LoopProof reads the Security Hub findings. Paste it into LoopProof's<br/>onboarding with role\_arn if the registration call failed. |
-| <a name="output_registered"></a> [registered](#output\_registered) | true once LoopProof accepted the registration; null when registration\_token is null. |
-| <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | ARN of the connector role. Paste it into LoopProof's onboarding, with region, if the registration call failed. |
+| <a name="output_region"></a> [region](#output\_region) | Region the module is applied in, where LoopProof reads the Security Hub findings. Paste it into LoopProof's<br/>onboarding with role\_arn if the registration call can't succeed. |
+| <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | ARN of the connector role. Paste it into LoopProof's onboarding, with region, if the registration call can't<br/>succeed, such as from a machine that can't reach LoopProof. |
 | <a name="output_role_name"></a> [role\_name](#output\_role\_name) | Name of the connector role, loopproof-<environment>-connector. |
 <!-- END_TF_DOCS -->
 

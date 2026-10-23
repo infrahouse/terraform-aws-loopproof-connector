@@ -1,6 +1,7 @@
 output "role_arn" {
   description = <<-EOT
-    ARN of the connector role. Paste it into LoopProof's onboarding, with region, if the registration call failed.
+    ARN of the connector role. Paste it into LoopProof's onboarding, with region, if the registration call can't
+    succeed, such as from a machine that can't reach LoopProof.
   EOT
   value       = aws_iam_role.connector.arn
 }
@@ -8,7 +9,7 @@ output "role_arn" {
 output "region" {
   description = <<-EOT
     Region the module is applied in, where LoopProof reads the Security Hub findings. Paste it into LoopProof's
-    onboarding with role_arn if the registration call failed.
+    onboarding with role_arn if the registration call can't succeed.
   EOT
   value       = local.region
 }
@@ -28,10 +29,4 @@ output "excluded_accounts_parameter" {
     Name of the SSM parameter that publishes excluded_accounts to LoopProof, /loopproof/<environment>/excluded-accounts.
   EOT
   value       = aws_ssm_parameter.excluded_accounts.name
-}
-
-output "registered" {
-  description = "true once LoopProof accepted the registration; null when registration_token is null."
-  # The postcondition on data.http.registration fails the run on any answer but 200.
-  value = local.register ? data.http.registration[0].status_code == 200 : null
 }
