@@ -15,7 +15,8 @@ Linear tickets. Tenants install it in the account where Security Hub collects fi
 It creates:
 
 - `loopproof-<environment>-connector`: a role the control plane assumes (`aws:PrincipalArn` matching
-  `loopproof-<environment>-*` in `control_plane_account_id`, plus `sts:ExternalId` from `external_ids`), allowed
+  `loopproof-<environment>-*` in `control_plane_account_id`, plus `sts:ExternalId` from the ExternalIds
+  parameter, below), allowed
   `securityhub:GetFindings` and `securityhub:BatchUpdateFindings`, the latter limited by Deny statements on
   `securityhub:OCSFSyntaxPath/*` to status and comment;
 - `loopproof-<environment>-findings`: an EventBridge rule for "Findings Imported V2" events by OCSF `severity_id`,
@@ -25,19 +26,37 @@ It creates:
   `excluded_accounts` sorted as JSON (`[]` when empty), which the connector role may `ssm:GetParameter` (its policy
   `excluded-accounts-parameter`) and nothing else in SSM. LoopProof reads it at onboarding and daily; a
   registration token works only until the tenant is provisioned, and the list changes after that;
-- with `registration_token` set, an `http` data source that POSTs `{"role_arn": ..., "region": ...}` to
-  `registration_url`. `region` is the AWS provider's Region, where the tenant applies the module: LoopProof reads the
-  tenant's Security Hub there, and an IAM ARN carries no Region.
+- `terraform_data.registration`, keyed on the role's ARN, whose `local-exec` runs `/bin/sh files/register.sh` once,
+  when the resource is created: on the apply that creates the role, when the role is replaced, and with
+  `terraform apply -replace`. The script POSTs `{"role_arn": ..., "region": ...}` to `registration_url` with `curl`,
+  the token from the token parameter in `Authorization`, retrying connection errors and 5xx, never a 4xx. A failure
+  fails the apply and taints the resource, so the next apply calls again. `region` is the AWS provider's Region,
+  where the tenant applies the module: LoopProof reads the tenant's Security Hub there, and an IAM ARN carries no
+  Region.
+
+The tenant's root creates two SSM SecureString parameters, `/loopproof/<environment>/external-ids` (a JSON list) and
+`/loopproof/<environment>/registration-token`, with the write-only placeholder `unset` (`value_wo`, Terraform 1.11),
+and passes their ARNs ("Part 1" in the docs; `test_data/connector` does it as the README says). The module reads the
+ExternalIds with `data "aws_ssm_parameter"` (`external_ids.tf`), whose postconditions refuse the placeholder, then
+anything but a JSON list of one or two ExternalIds, before `local.external_ids` decodes it; and the token with
+`ephemeral "aws_ssm_parameter"` (`registration.tf`). On a new root's first apply, both ARNs are unknown at plan, so
+both reads wait for the parameters, and the run stops at the placeholder: apply, fill, apply.
 
 ### Interface contract
 
 LoopProof's onboarding generates the module call, so the variable names (`environment`,
-`control_plane_account_id`, `external_ids`, `event_bus_arn`, `registration_url`, `registration_token`,
-`severities`, `excluded_accounts`) and outputs (`role_arn`, `region`, `role_name`, `event_rule_arn`, `registered`,
-`excluded_accounts_parameter`) are a contract. Don't rename them without a major version. So are the registration
-request body's fields, `role_arn` and `region`, which LoopProof's `POST /connector/registrations` reads, and the
-excluded accounts' parameter, its name and its value, a JSON list of account IDs, which LoopProof reads with the
-connector role.
+`control_plane_account_id`, `external_ids_parameter_arn`, `registration_token_parameter_arn`, `event_bus_arn`,
+`registration_url`, `severities`, `excluded_accounts`) and outputs (`role_arn`, `region`, `role_name`,
+`event_rule_arn`, `excluded_accounts_parameter`) are a contract. Don't rename them without a major version. So are:
+
+- the registration request body's fields, `role_arn` and `region`, which LoopProof's `POST /connector/registrations`
+  reads, and the token in `Authorization: Bearer`;
+- the ExternalIds parameter's value, a JSON list of one or two ExternalIds, and the placeholder `unset` that both
+  parameters hold until the tenant fills them, which LoopProof's generated Part 1 creates;
+- the excluded accounts' parameter, its name and its value, a JSON list of account IDs, which LoopProof reads with
+  the connector role.
+
+0.3.0's `external_ids` and `registration_token` inputs and `registered` output went in IH-114's major release.
 
 With `excluded_accounts` empty, the rule's pattern is exactly 0.2.0's, so upgrading changes no tenant's rule: keep it
 so. `anything-but` with no values isn't a valid pattern anyway. The account filter, like the control plane's echo
@@ -45,9 +64,20 @@ filter, relies on one finding per event: EventBridge matches an array when any e
 
 ### Credentials
 
-`external_ids` and `registration_token` are credentials. Never put them in an output, a tag, a description, or a
-validation message. The trust policy is wrapped in `sensitive()` because Terraform doesn't carry the variable's
-sensitivity into `aws_iam_policy_document.json`. The tests check plan and apply output for both values.
+The ExternalIds and the registration token are credentials, and neither is an input. Never put them in an output, a
+tag, a description, or a message: the checks' messages name the parameter, never the value. The trust policy is
+wrapped in `sensitive()` because Terraform doesn't carry the parameter value's sensitivity into
+`aws_iam_policy_document.json`; never `nonsensitive()` it. The token stays ephemeral: it reaches `files/register.sh`
+through the provisioner's `environment`, never its `command`, and `curl` through standard input, never an argument.
+Terraform suppresses the provisioner's output because of it, but shows all of it in the error when the script fails,
+so the script prints what to do and never the token, the request or `set -x`. The module uses no AWS CLI.
+
+The ARN inputs aren't sensitive: the checks' messages must name the parameter, and Terraform hides any message that
+holds a sensitive value. So Terraform prints a malformed ARN beside its validation error, as for any string input.
+
+The tests check plan and apply output, the outputs, the state, a saved plan and a `TF_LOG=DEBUG` log for both values
+(`test_bootstrap.py`). At DEBUG the AWS provider logs its reads' responses but an ephemeral resource's: the token
+shows there only in the refresh of Part 1's parameter, which is the root's, not the module's.
 
 ## Commands
 
@@ -71,12 +101,20 @@ probe roles `loopproof-pytest-probe` (matches the trust) and `outsider-pytest-pr
 
 | File | Covers |
 |------|--------|
-| `tests/test_module.py` | Install, outputs, ExternalId exposure, trust, permissions (IAM simulator), forwarding, the `[]` parameter |
-| `tests/test_excluded_accounts.py` | Two accounts excluded: pattern, test-event-pattern, parameter, plan output, reordering |
-| `tests/test_excluded_accounts_change.py` | `[]` → `[account]` → `[]`, each an in-place apply, then an empty plan |
-| `tests/test_rotation.py` | `[old]` → `[old, new]` → `[new]` without a failed AssumeRole |
-| `tests/test_registration.py` | POST against a local server on 127.0.0.1, refused registration, token not printed |
-| `tests/test_validation.py` | Variable validation (plans `test_data/validation`, creates nothing) |
+| `tests/test_bootstrap.py` | Apply, fill, apply without `-target`; both placeholders; the request; leaks |
+| `tests/test_registration_refused.py` | A 401 on the first registration, its message, the tainted retry |
+| `tests/test_registration.py` | No later call; `-replace`; a replaced role; retries; 4xx; no `curl` |
+| `tests/test_register_script.py` | `files/register.sh` with a stand-in `curl`: token on stdin only (no AWS) |
+| `tests/test_module.py` | Install, outputs, ExternalId exposure, trust, permissions, forwarding, `[]` |
+| `tests/test_excluded_accounts.py` | Two accounts excluded: pattern, matching, parameter, plan, reordering |
+| `tests/test_excluded_accounts_change.py` | `[]` → `[account]` → `[]`, each in place, then an empty plan |
+| `tests/test_rotation.py` | The parameter `[old]` → `[old, new]` → `[new]` without a failed AssumeRole |
+| `tests/test_validation.py` | Inputs and the ExternalIds parameter's contents, at plan |
+
+The connector tests install the tidy way, `connector_applied` in `conftest.py`: apply Part 1's parameters with
+`-target`, fill them, apply everything, with a stand-in for LoopProof's registration API on 127.0.0.1
+(`RegistrationServer`, which counts the calls and answers as told). Every install registers, so every connector test
+runs the stand-in. `test_bootstrap.py` alone takes the first apply without `-target`.
 
 Tests that change a deployment after its fixture applied it can't share a file with parametrized tests: pytest runs
 the parametrized cases grouped by index, after the later tests of the file. Put such a sequence in one test, in a file
@@ -86,7 +124,9 @@ of its own, as `test_excluded_accounts_change.py` does.
 ExternalId now and then for a few minutes (a value listed before and after is never refused), so each step waits
 until its change has held for `SETTLE_SECONDS` without a refusal. Don't shorten it to the first success.
 
-Tests write `terraform.tf` and `terraform.tfvars.json` into the `test_data` roots; both are gitignored.
+Tests write `terraform.tf` and `terraform.tfvars.json` into the `test_data` roots; both are gitignored. The connector
+root needs Terraform 1.11, for Part 1's `value_wo`. Every test takes the `aws-6` id, which `make test-clean`'s
+default `TEST_SELECTOR` selects; `test_register_script.py` takes it without using it.
 `tests/data/findings-imported-v2.json` is the sample event.
 
 ## Version Management
