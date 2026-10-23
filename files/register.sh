@@ -79,7 +79,9 @@ while :; do
                 "$LOOPPROOF_REGISTRATION_URL" 2> "$error_file"
     )
     curl_exit=$?
+    # Nothing at all if curl couldn't start, which counts as no answer.
     code=${status##* }
+    [ -n "$code" ] || code=000
 
     case $code in
         2??)
@@ -92,7 +94,8 @@ while :; do
             printf "LoopProof's answer: "
             cat "$answer_file"
             printf '\n%s\n' \
-                "Get a new registration token in LoopProof and put it in the SSM parameter $LOOPPROOF_TOKEN_PARAMETER_ARN, then apply again."
+                "Get a new registration token in LoopProof and put it in the SSM parameter" \
+                "$LOOPPROOF_TOKEN_PARAMETER_ARN, then apply again."
             paste_instead
             exit 1
             ;;
