@@ -145,8 +145,8 @@ Besides managing IAM roles, EventBridge rules and SSM parameters:
 * `ssm:GetParameter` on `/loopproof/<environment>/*`: the module reads both parameters on every plan and apply;
 * `kms:Decrypt` on the key, if Part 1 gives the parameters a customer-managed key instead of the default
   `aws/ssm`, whose key policy already allows it to the account's principals;
-* `curl` on the machine that runs Terraform, Linux or macOS, with HTTPS access to `registration_url`. Windows isn't
-  supported.
+* `curl` 7.76.0 or later on the machine that runs Terraform, Linux or macOS, with HTTPS access to
+  `registration_url`. Windows isn't supported.
 
 The fill commands need `ssm:PutParameter`, and with a customer-managed key `kms:Encrypt` and `kms:GenerateDataKey`.
 
@@ -162,11 +162,13 @@ LoopProof generates the ExternalId and the token, and treats both as credentials
   environment and standard input, never a command line;
 * no output, tag or description holds either.
 
-The ExternalIds are in the state, in the trust policy, and readable in the role by anyone in your account allowed
-`iam:GetRole`. That is unavoidable, and inside your account. At `TF_LOG=DEBUG` the AWS provider logs the responses
-of its AWS calls but an ephemeral read's, so a debug log of this root holds both values: refreshing Part 1's
-parameters reads them decrypted, and the module's read of the ExternalIds and the role's trust policy show the
-ExternalIds. Treat such a log as a secret.
+The ExternalIds are in the state, and so in any saved plan file (`terraform plan -out`), in the module's read and
+the trust policy, and readable in the role by anyone in your account allowed `iam:GetRole`. That is unavoidable, and
+inside your account; protect saved plans, such as CI artifacts, as you protect the state.
+
+At `TF_LOG=DEBUG` the AWS provider logs the responses of its AWS calls but an ephemeral read's, so a debug log of
+this root holds both values: refreshing Part 1's parameters reads them decrypted, and the module's read of the
+ExternalIds and the role's trust policy show the ExternalIds. Treat such a log as a secret.
 
 `terraform destroy` deletes the parameters with their values, which is right for an uninstall; know it before you
 destroy the root for another reason.
@@ -203,6 +205,14 @@ Region, so LoopProof can't learn it from the ARN.
   `module.<name>.terraform_data.registration`. LoopProof answers `200` for a role it already has.
 * While the call runs, Terraform shows its output as `(output suppressed due to ephemeral value in config)`, because
   the token is in its environment; when it fails, the error shows everything it printed. It never prints the token.
+
+### Keep the token in its parameter
+
+Leave the registration token in its parameter after the connector registers, expired or not. It is what registers
+the role again when the role is replaced, or with `terraform apply -replace`: LoopProof answers `200` to a token that
+presents the role it already registered, whatever its expiry. LoopProof issues a new token only until your tenant is
+provisioned, so after that, a parameter put back to `unset`, or holding another value, makes the next of those
+registrations fail on every apply.
 
 The ARN is only a hint: LoopProof proves the account later by assuming the role.
 
@@ -248,7 +258,8 @@ your findings' history through the connector role. You don't need to debug those
 ### Upgrading from 0.3.0
 
 This release takes the two parameters' ARNs in place of `external_ids` and `registration_token`, and drops the
-`registered` output and the `hashicorp/http` provider. See
+`registered` output and the `hashicorp/http` provider. An installed tenant upgrades with the registration token it
+installed with. See
 [Upgrading](https://infrahouse.github.io/terraform-aws-loopproof-connector/upgrading/).
 
 ## Documentation
@@ -266,7 +277,8 @@ Full documentation is at [infrahouse.github.io/terraform-aws-loopproof-connector
 
 * Terraform `>= 1.10` for the module, and `>= 1.11` for Part 1's write-only placeholder
 * AWS provider `>= 6.0`
-* `curl`, on Linux or macOS, with HTTPS access to LoopProof's API from the machine that runs Terraform
+* `curl` 7.76.0 or later, on Linux or macOS, with HTTPS access to LoopProof's API from the machine that runs
+  Terraform
 * Security Hub (the OCSF-based version, not Security Hub CSPM alone) enabled in the account and Region
 
 ## Usage

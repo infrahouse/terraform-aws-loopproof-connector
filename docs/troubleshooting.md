@@ -39,7 +39,8 @@ failed, and it is tainted.
 * A `401` usually means the token expired (it's valid for 24 hours), was replaced by a newer one, or registered
   nothing before the tenant was provisioned. A `409` means the token already registered another role.
 * Get a new registration token in LoopProof, put it in the token parameter, and run a plain `terraform apply`: the
-  tainted registration runs again by itself.
+  tainted registration runs again by itself. LoopProof issues new tokens only until your tenant is provisioned; after
+  that, put back the token the connector registered with, which LoopProof keeps accepting for the same role.
 * Or paste the role ARN and the Region from the error, or the `role_arn` and `region` outputs, into LoopProof's
   onboarding.
 
@@ -52,7 +53,12 @@ into LoopProof. From a machine that can never reach LoopProof, each apply fails 
 
 ## The apply fails with "registers the connector role with curl, which isn't on PATH"
 
-Install `curl` on the machine that runs Terraform, and apply again. Windows isn't supported.
+Install `curl` 7.76.0 or later on the machine that runs Terraform, and apply again. Windows isn't supported.
+
+## The apply fails with "registers the connector role with curl 7.76.0 or later"
+
+The machine's `curl` is older than 7.76.0, which added `--fail-with-body`; RHEL and Rocky Linux 8 ship 7.61, and
+Debian 11 ships 7.74. Install a newer `curl` first on `PATH`, or apply from another machine, and apply again.
 
 ## The plan fails with ParameterNotFound or AccessDeniedException
 
