@@ -16,19 +16,8 @@ variable "environment" {
   type = string
 }
 
-variable "external_ids" {
-  type      = list(string)
-  sensitive = true
-}
-
 variable "registration_url" {
   type = string
-}
-
-variable "registration_token" {
-  type      = string
-  sensitive = true
-  default   = null
 }
 
 variable "severities" {

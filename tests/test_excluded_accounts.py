@@ -14,13 +14,14 @@ from tests.conftest import (
     CONNECTOR_ROOT,
     EXCLUDED_ACCOUNTS_PARAMETER,
     RULE_NAME,
-    UNCALLED_REGISTRATION_URL,
     connector_applied,
     connector_tfvars,
     finding_event,
     forwarded,
     forwarding_pattern_document,
     new_external_id,
+    new_registration_token,
+    registration_server_running,
     terraform,
     write_terraform_tf,
     write_tfvars,
@@ -38,23 +39,23 @@ INCLUDED = "444455556666"
 
 @pytest.fixture(scope="module")
 def connector(
-    aws_provider_version, aws_region, test_role_arn, keep_after
+    aws_provider_version, aws_region, test_role_arn, keep_after, boto3_session
 ) -> Iterator[Dict[str, Any]]:
     """Install the connector excluding two accounts."""
-    tfvars = connector_tfvars(
-        aws_region,
-        test_role_arn,
-        [new_external_id()],
-        UNCALLED_REGISTRATION_URL,
-        excluded_accounts=EXCLUDED,
-    )
-    write_terraform_tf(CONNECTOR_ROOT, aws_provider_version)
-    write_tfvars(CONNECTOR_ROOT, tfvars)
-    with connector_applied(CONNECTOR_ROOT, destroy_after=not keep_after) as (
-        outputs,
-        log,
-    ):
-        yield {"outputs": outputs, "log": log, "tfvars": tfvars}
+    with registration_server_running() as server:
+        tfvars = connector_tfvars(
+            aws_region, test_role_arn, server.url, excluded_accounts=EXCLUDED
+        )
+        write_terraform_tf(CONNECTOR_ROOT, aws_provider_version)
+        write_tfvars(CONNECTOR_ROOT, tfvars)
+        with connector_applied(
+            CONNECTOR_ROOT,
+            boto3_session.client("ssm", region_name=aws_region),
+            [new_external_id()],
+            new_registration_token(),
+            destroy_after=not keep_after,
+        ) as (outputs, log):
+            yield {"outputs": outputs, "log": log, "tfvars": tfvars}
 
 
 def test_pattern_document(connector, events_client):

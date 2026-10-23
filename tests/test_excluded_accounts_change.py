@@ -13,13 +13,13 @@ from tests.conftest import (
     CONNECTOR_ROOT,
     EXCLUDED_ACCOUNTS_PARAMETER,
     RULE_NAME,
-    UNCALLED_REGISTRATION_URL,
     connector_applied,
     connector_tfvars,
     finding_event,
     forwarded,
     forwarding_pattern_document,
     new_external_id,
+    new_registration_token,
     terraform,
     terraform_check,
     write_terraform_tf,
@@ -59,15 +59,22 @@ def test_list_change_takes_effect_on_next_apply(
     keep_after,
     events_client,
     ssm_client,
+    registration_server,
 ):
     """Adding an account and removing it again each take one apply, which replaces nothing."""
     tfvars: Dict[str, Any] = connector_tfvars(
-        aws_region, test_role_arn, [new_external_id()], UNCALLED_REGISTRATION_URL
+        aws_region, test_role_arn, registration_server.url
     )
     write_terraform_tf(CONNECTOR_ROOT, aws_provider_version)
     write_tfvars(CONNECTOR_ROOT, tfvars)
 
-    with connector_applied(CONNECTOR_ROOT, destroy_after=not keep_after):
+    with connector_applied(
+        CONNECTOR_ROOT,
+        ssm_client,
+        [new_external_id()],
+        new_registration_token(),
+        destroy_after=not keep_after,
+    ):
         assert_excluded(events_client, ssm_client, [])
 
         for excluded in [[ACCOUNT], []]:
@@ -81,3 +88,5 @@ def test_list_change_takes_effect_on_next_apply(
 
         result = terraform(CONNECTOR_ROOT, "plan", "-input=false", "-detailed-exitcode")
         assert result.returncode == 0, "the plan after the last apply isn't empty"
+        # The list's changes don't touch the role, so the connector registered once.
+        assert len(registration_server.requests) == 1

@@ -18,8 +18,12 @@ output "excluded_accounts_parameter" {
   value = module.connector.excluded_accounts_parameter
 }
 
-output "registered" {
-  value = module.connector.registered
+output "external_ids_parameter_arn" {
+  value = aws_ssm_parameter.loopproof_external_ids.arn
+}
+
+output "registration_token_parameter_arn" {
+  value = aws_ssm_parameter.loopproof_registration_token.arn
 }
 
 output "event_bus_arn" {

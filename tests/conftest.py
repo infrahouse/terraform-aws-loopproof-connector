@@ -38,12 +38,26 @@ VALIDATION_ROOT = osp.join(TERRAFORM_ROOT_DIR, "validation")
 TEST_ENVIRONMENT = "pytest"
 RULE_NAME = f"loopproof-{TEST_ENVIRONMENT}-findings"
 EXCLUDED_ACCOUNTS_PARAMETER = f"/loopproof/{TEST_ENVIRONMENT}/excluded-accounts"
+# Part 1 of the install, which test_data/connector creates as the README tells a tenant to.
+EXTERNAL_IDS_PARAMETER = f"/loopproof/{TEST_ENVIRONMENT}/external-ids"
+REGISTRATION_TOKEN_PARAMETER = f"/loopproof/{TEST_ENVIRONMENT}/registration-token"
+PARAMETER_ADDRESSES = [
+    "aws_ssm_parameter.loopproof_external_ids",
+    "aws_ssm_parameter.loopproof_registration_token",
+]
+# What Part 1 creates the parameters with, until the tenant fills them.
+PLACEHOLDER = "unset"
+REGISTRATION_ADDRESS = "module.connector.terraform_data.registration"
+ROLE_ADDRESS = "module.connector.aws_iam_role.connector"
 # JSON, which Terraform loads by itself and `terraform fmt` leaves alone.
 TFVARS_FILE = "terraform.tfvars.json"
+STATE_FILES = ["terraform.tfstate", "terraform.tfstate.backup"]
 REGISTRATION_PATH = "/connector/registrations"
-# For installs without a token, which never call it.
+# For roots that plan only, which never call it.
 UNCALLED_REGISTRATION_URL = "https://api.loopproof.invalid/connector/registrations"
 SAMPLE_EVENT_PATH = osp.join(osp.dirname(__file__), "data", "findings-imported-v2.json")
+# How many times the module's script calls the API before it gives up on a 5xx or a connection error.
+REGISTRATION_ATTEMPTS = 4
 
 # A new or changed trust policy can take a minute or more to apply everywhere in IAM.
 IAM_PROPAGATION_TIMEOUT = 300
@@ -121,19 +135,16 @@ def write_tfvars(root: str, values: Dict[str, Any]) -> None:
 def connector_tfvars(
     aws_region: str,
     test_role_arn: Optional[str],
-    external_ids: List[str],
     registration_url: str,
-    registration_token: Optional[str] = None,
     excluded_accounts: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Build the variables of the ``connector`` test root module.
+    Build the variables of the ``connector`` test root module. The ExternalIds and the registration
+    token aren't variables: the module reads them from the root's SSM parameters.
 
     :param aws_region: Region of the tenant side of the test.
     :param test_role_arn: Role that Terraform assumes, if any.
-    :param external_ids: ExternalIds for the connector role.
     :param registration_url: Where the module reports the role ARN.
-    :param registration_token: Registration token; ``None`` disables the call.
     :param excluded_accounts: Accounts whose findings aren't forwarded; ``None`` for the module's default.
     :return: Variable names and values.
     """
@@ -141,46 +152,121 @@ def connector_tfvars(
         "region": aws_region,
         "role_arn": test_role_arn,
         "environment": TEST_ENVIRONMENT,
-        "external_ids": external_ids,
         "registration_url": registration_url,
-        "registration_token": registration_token,
         "excluded_accounts": excluded_accounts,
     }
 
 
-def terraform(root: str, *args: str) -> subprocess.CompletedProcess:
+def terraform(
+    root: str, *args: str, env: Optional[Dict[str, str]] = None
+) -> subprocess.CompletedProcess:
     """
     Run a Terraform command in a root module and capture what it prints.
 
     :param root: Path to the Terraform root module.
     :param args: Terraform subcommand and arguments.
+    :param env: Environment for Terraform; the test's own when ``None``.
     :return: The finished process; it may have failed.
     """
     # Flags must precede positional arguments, such as a plan file.
     cmd = ["terraform", args[0], "-no-color", *args[1:]]
     LOG.info("Executing in %s: %s", root, " ".join(cmd))
-    result = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        cmd, cwd=root, capture_output=True, text=True, check=False, env=env
+    )
     LOG.info("stdout:\n%s", result.stdout)
     if result.stderr:
         LOG.info("stderr:\n%s", result.stderr)
     return result
 
 
-def terraform_check(root: str, *args: str) -> str:
+def terraform_check(root: str, *args: str, env: Optional[Dict[str, str]] = None) -> str:
     """
     Run a Terraform command that must succeed.
 
     :param root: Path to the Terraform root module.
     :param args: Terraform subcommand and arguments.
+    :param env: Environment for Terraform; the test's own when ``None``.
     :return: Everything the command printed, stdout and stderr.
     :raise subprocess.CalledProcessError: If Terraform exits with non-zero.
     """
-    result = terraform(root, *args)
+    result = terraform(root, *args, env=env)
     if result.returncode != 0:
         raise subprocess.CalledProcessError(
             result.returncode, result.args, output=result.stdout, stderr=result.stderr
         )
     return result.stdout + result.stderr
+
+
+def printed(result: subprocess.CompletedProcess) -> str:
+    """
+    :param result: A finished Terraform command.
+    :return: Everything it printed, with whitespace runs joined, since Terraform wraps long messages.
+    """
+    return " ".join((result.stdout + result.stderr).split())
+
+
+def fill_parameters(
+    ssm_client: Any,
+    external_ids: Optional[List[str]] = None,
+    registration_token: Optional[str] = None,
+) -> None:
+    """
+    Put values in Part 1's parameters, as a tenant does after the first apply. ``None`` leaves one as it is.
+
+    :param ssm_client: Systems Manager in the tenant's Region.
+    :param external_ids: The ExternalIds, stored as a JSON list.
+    :param registration_token: The registration token.
+    """
+    values = {
+        EXTERNAL_IDS_PARAMETER: (
+            None if external_ids is None else json.dumps(external_ids)
+        ),
+        REGISTRATION_TOKEN_PARAMETER: registration_token,
+    }
+    for name, value in values.items():
+        if value is not None:
+            ssm_client.put_parameter(
+                Name=name, Value=value, Type="SecureString", Overwrite=True
+            )
+
+
+def state_text(root: str) -> str:
+    """
+    :param root: Path to the Terraform root module.
+    :return: The contents of its state files, those that exist.
+    """
+    text = ""
+    for name in STATE_FILES:
+        if osp.exists(osp.join(root, name)):
+            with open(osp.join(root, name), encoding="utf-8") as fp:
+                text += fp.read()
+    return text
+
+
+def path_without(command: str, directory: str) -> str:
+    """
+    Build a ``PATH`` on which ``command`` isn't found, and everything else still is: each directory that
+    holds it is replaced by one in ``directory`` with links to all its other entries.
+
+    :param command: The command to hide, such as ``curl``.
+    :param directory: An empty directory for the replacements.
+    :return: The new ``PATH``.
+    """
+    entries = []
+    for index, entry in enumerate(os.environ["PATH"].split(os.pathsep)):
+        if not osp.exists(osp.join(entry, command)):
+            entries.append(entry)
+            continue
+        replacement = osp.join(directory, str(index))
+        os.mkdir(replacement)
+        for name in os.listdir(entry):
+            if name != command:
+                os.symlink(osp.join(entry, name), osp.join(replacement, name))
+        entries.append(replacement)
+    path = os.pathsep.join(entries)
+    assert shutil.which(command, path=path) is None
+    return path
 
 
 def terraform_outputs(root: str) -> Dict[str, Any]:
@@ -196,17 +282,28 @@ def terraform_outputs(root: str) -> Dict[str, Any]:
 
 @contextmanager
 def connector_applied(
-    root: str, destroy_after: bool
+    root: str,
+    ssm_client: Any,
+    external_ids: List[str],
+    registration_token: str,
+    destroy_after: bool,
 ) -> Iterator[Tuple[Dict[str, Any], str]]:
     """
-    Plan and apply a root module, capturing the output, and destroy it afterwards.
+    Install the connector the tidy way: apply Part 1's parameters alone, fill them, then plan and apply
+    everything, capturing the output. Destroy it all afterwards.
 
     :param root: Path to the Terraform root module, with its variables file written.
+    :param ssm_client: Systems Manager in the tenant's Region.
+    :param external_ids: The ExternalIds to store.
+    :param registration_token: The registration token to store.
     :param destroy_after: Destroy the resources when the context exits.
-    :return: The outputs and everything plan and apply printed.
+    :return: The outputs and everything the full plan and apply printed.
     """
     try:
         terraform_check(root, "init", "-input=false")
+        targets = [f"-target={address}" for address in PARAMETER_ADDRESSES]
+        terraform_check(root, "apply", "-input=false", "-auto-approve", *targets)
+        fill_parameters(ssm_client, external_ids, registration_token)
         log = terraform_check(root, "plan", "-input=false", "-out=tfplan")
         log += terraform_check(root, "apply", "-input=false", "tfplan")
         yield terraform_outputs(root), log
@@ -398,13 +495,19 @@ class ConnectorProbe:
 
 class RegistrationServer:
     """
-    A stand-in for LoopProof's registration API, listening on 127.0.0.1.
-    It records every request and answers with ``status``.
+    A stand-in for LoopProof's registration API, listening on 127.0.0.1. It records every request and
+    answers each with the next of ``answers``, repeating the last: an HTTP status, or :data:`DROP` to
+    close the connection without answering. 200 says ``{"status": "registered"}``, as LoopProof does;
+    any other status says ``{"detail": <message>}``.
     """
+
+    DROP = "drop"
 
     def __init__(self):
         self.requests: List[Dict[str, Any]] = []
-        self.status = 200
+        self.message = "registration token expired"
+        self._answers: List[Any] = [200]
+        self._lock = threading.Lock()
         self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
 
@@ -419,6 +522,15 @@ class RegistrationServer:
 
     # --- Public methods ---
 
+    def answer(self, *answers: Any) -> None:
+        """
+        Set the answers to the next requests; the last one repeats.
+
+        :param answers: HTTP statuses, or :data:`DROP`.
+        """
+        with self._lock:
+            self._answers = list(answers)
+
     def start(self) -> None:
         """Start serving in a background thread."""
         self._thread.start()
@@ -430,6 +542,13 @@ class RegistrationServer:
 
     # --- Private methods ---
 
+    def _next_answer(self) -> Any:
+        """
+        :return: The answer to the request being handled.
+        """
+        with self._lock:
+            return self._answers.pop(0) if len(self._answers) > 1 else self._answers[0]
+
     def _handler(self) -> type:
         """
         :return: A request handler class bound to this server.
@@ -437,7 +556,7 @@ class RegistrationServer:
         server = self
 
         class Handler(BaseHTTPRequestHandler):
-            """Records the request and answers with the server's status."""
+            """Records the request and answers with the server's next answer."""
 
             def do_POST(self) -> None:  # pylint: disable=invalid-name
                 length = int(self.headers.get("Content-Length", 0))
@@ -449,12 +568,17 @@ class RegistrationServer:
                         "body": self.rfile.read(length).decode("utf-8"),
                     }
                 )
-                body = (
-                    b'{"status": "ok"}'
-                    if server.status == 200
-                    else b'{"error": "rejected"}'
-                )
-                self.send_response(server.status)
+                answer = server._next_answer()  # pylint: disable=protected-access
+                if answer == RegistrationServer.DROP:
+                    # curl reports an empty reply, error 52, which the module retries.
+                    self.close_connection = True
+                    return
+                body = json.dumps(
+                    {"status": "registered"}
+                    if answer == 200
+                    else {"detail": server.message}
+                ).encode("utf-8")
+                self.send_response(answer)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
