@@ -90,24 +90,28 @@ LoopProof reads. Set `excluded_accounts = []`, or remove it, to include the acco
 
 The Terraform doesn't change; the parameter does.
 
-1. Put both values in the parameter, and apply. LoopProof's calls keep working with the old one.
+1. Add the new value to the parameter, and apply. LoopProof's calls keep working with the old one. The command
+   reads the current list from the parameter and adds the value you type; it prints neither.
 
     ```bash
-    printf 'Old ExternalId: ' >&2; stty -echo; read -r old; stty echo; printf '\n' >&2
     printf 'New ExternalId: ' >&2; stty -echo; read -r new; stty echo; printf '\n' >&2
-    printf '["%s","%s"]' "$old" "$new" | aws ssm put-parameter --overwrite --type SecureString \
-      --name /loopproof/production/external-ids --value file:///dev/stdin; unset old new
+    current=$(aws ssm get-parameter --with-decryption --name /loopproof/production/external-ids \
+      --query Parameter.Value --output text)
+    printf '%s' "${current%]},\"$new\"]" | aws ssm put-parameter --overwrite --type SecureString \
+      --name /loopproof/production/external-ids --value file:///dev/stdin; unset current new
     terraform apply
     ```
 
 2. Wait at least 10 minutes, then tell LoopProof to switch to the new value.
 
-3. Put the new value only, and apply.
+3. Keep the new value only, and apply. The command keeps the last value of step 1's list, the new one, and prints
+   nothing; it expects the two values step 1 left.
 
     ```bash
-    printf 'New ExternalId: ' >&2; stty -echo; read -r new; stty echo; printf '\n' >&2
-    printf '["%s"]' "$new" | aws ssm put-parameter --overwrite --type SecureString \
-      --name /loopproof/production/external-ids --value file:///dev/stdin; unset new
+    current=$(aws ssm get-parameter --with-decryption --name /loopproof/production/external-ids \
+      --query Parameter.Value --output text)
+    printf '[%s' "${current##*,}" | aws ssm put-parameter --overwrite --type SecureString \
+      --name /loopproof/production/external-ids --value file:///dev/stdin; unset current
     terraform apply
     ```
 

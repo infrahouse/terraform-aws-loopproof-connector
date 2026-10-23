@@ -4,8 +4,8 @@
 
 * Security Hub (the OCSF-based Security Hub, which emits "Findings Imported V2" events) enabled.
 * Terraform `>= 1.11` for the root below (the module itself needs `>= 1.10`), with the AWS provider `>= 6.0`.
-* A Linux or macOS machine to run Terraform, with `curl` and HTTPS access to LoopProof's API. Windows isn't
-  supported. Without access to the API, see
+* A Linux or macOS machine to run Terraform, with `curl` 7.76.0 or later and HTTPS access to LoopProof's API.
+  Windows isn't supported. Without access to the API, see
   [A machine that can't reach LoopProof](#a-machine-that-cant-reach-loopproof).
 * The AWS CLI, to fill the parameters.
 * Credentials for the account and Region described below, allowed to manage IAM roles, EventBridge rules and SSM
@@ -102,8 +102,10 @@ linked Region, and `GetFindingsV2` can read them all.
 5. **Finish onboarding in LoopProof.** It proves the account by assuming the role. Until then, LoopProof's bus
    refuses your events; see [Troubleshooting](troubleshooting.md#eventbridge-reports-failed-invocations).
 
-Later plans and applies read the parameters but never call LoopProof. Keep both parameters: the module reads them on
-every plan.
+Later plans and applies read the parameters but never call LoopProof. Keep both parameters, since the module reads
+them on every plan, and keep the token in its parameter: it registers the role again when the role is replaced, and
+LoopProof issues a new token only until your tenant is provisioned. See
+[Security](security.md#the-registration-token).
 
 ## A machine that can't reach LoopProof
 

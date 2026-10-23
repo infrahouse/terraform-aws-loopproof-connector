@@ -101,8 +101,8 @@ reads your Security Hub findings in that Region; an IAM role ARN names no Region
 
 * The token reaches the script through the provisioner's environment, from the ephemeral read, and `curl` through
   its standard input; it is on no command line, in the plan or in the state.
-* `curl -sS --fail-with-body --max-time 30`. The script checks `command -v curl` first and fails with a plain
-  message if it's missing.
+* `curl -sS --fail-with-body --max-time 30`. The script checks `command -v curl` first, and `curl --version` for
+  7.76.0 or later, which added `--fail-with-body`, and fails with a plain message if either is wrong.
 * A 2xx answer registers. A 4xx fails at once; connection errors, timeouts and 5xx answers are tried again, four
   attempts in all, two, four and eight seconds apart.
 * Later plans and applies make no call. The call runs again when the role is replaced, and with

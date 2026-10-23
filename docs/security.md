@@ -56,11 +56,13 @@ LoopProof generates the ExternalId and treats it as a credential, and so does th
   value's sensitivity into the JSON of a policy document, so the module marks it;
 * no output, tag or description contains it.
 
-Two places hold it anyway, by design:
+These places hold it anyway, by design:
 
 * the role's trust policy, readable by anyone in your account allowed `iam:GetRole`;
 * the Terraform state: the module's read of the parameter and the trust policy. Protect the state as you protect
-  other credentials.
+  other credentials;
+* every saved plan file (`terraform plan -out`), which holds the same as the state. Pipelines often keep plan files
+  as artifacts, protected less than the state: protect them as you protect the state.
 
 ## Rotating the ExternalId
 
@@ -90,6 +92,12 @@ the module in. The ARN is just a hint: LoopProof proves the account by assuming 
 * never prints it: the script runs without `set -x` or `curl -v`, and prints only the answer's status, LoopProof's
   message and what to do;
 * refuses any URL but `https://` (or a loopback address), and URLs with credentials in them.
+
+Keep the token in its parameter after the connector registers, expired or not. The registration runs again when the
+role is replaced, or with `terraform apply -replace`, with the token in the parameter, and LoopProof answers `200` to
+the token that registered the role, whatever its expiry. It issues a new token only until your tenant is
+provisioned, so after that, a parameter put back to `unset`, or holding another value, makes such a registration fail
+on every apply. The token gives nothing once spent but that repeat: LoopProof refuses it for any other role.
 
 ## Debug logs
 

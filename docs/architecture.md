@@ -144,7 +144,7 @@ apply creates the connector.
 `terraform_data.registration`, keyed on the role's ARN (`triggers_replace`), runs a `local-exec` provisioner when it
 is created: `/bin/sh files/register.sh`, after the role and its policies exist. The script:
 
-1. checks `command -v curl`, and fails with a plain message without it;
+1. checks `command -v curl` and `curl --version`, and fails with a plain message without curl 7.76.0 or later;
 2. fails, naming the parameter, if the token parameter holds the placeholder or something that doesn't start with
    `lprt_`;
 3. POSTs `{"role_arn": "<role arn>", "region": "<region>"}` to `registration_url` with
