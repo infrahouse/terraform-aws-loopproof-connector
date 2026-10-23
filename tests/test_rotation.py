@@ -1,5 +1,6 @@
 """
-ExternalId rotation without a failed AssumeRole: apply with [old], then [old, new], then [new].
+ExternalId rotation without a failed AssumeRole: the tenant puts [old], then [old, new], then [new] in
+the ExternalIds parameter, applying after each step. The Terraform doesn't change.
 
 Right after a trust policy change, some STS hosts keep using the previous policy for minutes. In the
 test account, a newly added ExternalId was refused now and then for several minutes after the change,
@@ -9,22 +10,20 @@ denial for it fails the test.
 """
 
 import pytest
-from pytest_infrahouse import terraform_apply
 
 from tests.conftest import (
     CONNECTOR_ROOT,
-    REGISTRATION_PATH,
-    TFVARS_FILE,
     ConnectorProbe,
+    connector_applied,
     connector_tfvars,
+    fill_parameters,
     new_external_id,
+    new_registration_token,
+    terraform_check,
     wait_until_settled,
     write_terraform_tf,
     write_tfvars,
 )
-
-# No registration token, so the module never calls this URL.
-UNUSED_REGISTRATION_URL = f"http://127.0.0.1:9{REGISTRATION_PATH}"
 
 # How long a change must hold on every poll before the next step, and how long a step may take.
 SETTLE_SECONDS = 300
@@ -33,33 +32,39 @@ STEP_TIMEOUT = 1800
 
 @pytest.mark.parametrize("aws_provider_version", ["~> 6.0"], ids=["aws-6"])
 def test_rotation(
-    aws_provider_version, aws_region, test_role_arn, keep_after, boto3_session
+    aws_provider_version,
+    aws_region,
+    test_role_arn,
+    keep_after,
+    boto3_session,
+    ssm_client,
+    registration_server,
 ):
     old = new_external_id()
     new = new_external_id()
 
     def apply_with(external_ids):
-        write_tfvars(
-            CONNECTOR_ROOT,
-            connector_tfvars(
-                aws_region, test_role_arn, external_ids, UNUSED_REGISTRATION_URL
-            ),
-        )
+        fill_parameters(ssm_client, external_ids=external_ids)
+        log = terraform_check(CONNECTOR_ROOT, "apply", "-input=false", "-auto-approve")
+        # The trust policy, in place.
+        assert "Resources: 0 added, 1 changed, 0 destroyed." in log
 
     write_terraform_tf(CONNECTOR_ROOT, aws_provider_version)
+    write_tfvars(
+        CONNECTOR_ROOT,
+        connector_tfvars(aws_region, test_role_arn, registration_server.url),
+    )
 
     # Step 1: [old]. The role is new, so old may be refused now and then until IAM settles.
-    apply_with([old])
-    with terraform_apply(
+    with connector_applied(
         CONNECTOR_ROOT,
+        ssm_client,
+        [old],
+        new_registration_token(),
         destroy_after=not keep_after,
-        json_output=True,
-        var_file=TFVARS_FILE,
-    ) as tf_output:
-        probe_role_arn = tf_output["probe_role_arn"]["value"]
-        probe = ConnectorProbe(
-            boto3_session, aws_region, tf_output["role_arn"]["value"]
-        )
+    ) as (outputs, _):
+        probe_role_arn = outputs["probe_role_arn"]
+        probe = ConnectorProbe(boto3_session, aws_region, outputs["role_arn"])
         wait_until_settled(
             lambda: probe.can_assume(probe_role_arn, old),
             "the connector role accepts the old ExternalId",
@@ -72,10 +77,6 @@ def test_rotation(
 
         # Step 2: [old, new]. Both work; old never stops working.
         apply_with([old, new])
-        with terraform_apply(
-            CONNECTOR_ROOT, destroy_after=False, json_output=False, var_file=TFVARS_FILE
-        ):
-            pass
 
         def old_works() -> None:
             assert probe.can_assume(
@@ -95,10 +96,6 @@ def test_rotation(
 
         # Step 3: [new]. The old one is denied; new never stops working.
         apply_with([new])
-        with terraform_apply(
-            CONNECTOR_ROOT, destroy_after=False, json_output=False, var_file=TFVARS_FILE
-        ):
-            pass
 
         def old_denied_and_new_still_works() -> bool:
             assert probe.can_assume(
@@ -112,3 +109,6 @@ def test_rotation(
             SETTLE_SECONDS,
             STEP_TIMEOUT,
         )
+
+        # The trust policy changed in place; the role, and so its registration, stayed.
+        assert len(registration_server.requests) == 1

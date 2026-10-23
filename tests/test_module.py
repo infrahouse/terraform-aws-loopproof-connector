@@ -1,7 +1,7 @@
 """
-A plain install, without a registration token or excluded accounts: the resources, the outputs,
-the trust policy, the connector's permissions, the forwarding rule and the excluded accounts'
-parameter. The tests share one deployment.
+A plain install, without excluded accounts: the resources, the outputs, the trust policy, the
+connector's permissions, the forwarding rule and the excluded accounts' parameter. The tests share
+one deployment.
 """
 
 import json
@@ -14,8 +14,10 @@ from botocore.exceptions import ClientError
 from tests.conftest import (
     CONNECTOR_ROOT,
     EXCLUDED_ACCOUNTS_PARAMETER,
+    EXTERNAL_IDS_PARAMETER,
     MODULE_VERSION,
     OCSF_SEVERITY_IDS,
+    REGISTRATION_TOKEN_PARAMETER,
     TEST_ENVIRONMENT,
     ConnectorProbe,
     as_list,
@@ -23,6 +25,7 @@ from tests.conftest import (
     connector_tfvars,
     finding_event,
     new_external_id,
+    new_registration_token,
     policy_statements,
     registration_server_running,
     terraform_check,
@@ -41,20 +44,22 @@ NOT_FORWARDED = ["Low", "Medium", "Informational"]
 
 @pytest.fixture(scope="module")
 def connector(
-    aws_provider_version, aws_region, test_role_arn, keep_after
+    aws_provider_version, aws_region, test_role_arn, keep_after, boto3_session
 ) -> Iterator[Dict[str, Any]]:
-    """Install the connector without a registration token, with a registration server listening."""
+    """Install the connector, which registers with a stand-in for LoopProof's API."""
     external_id = new_external_id()
     with registration_server_running() as server:
         write_terraform_tf(CONNECTOR_ROOT, aws_provider_version)
         write_tfvars(
-            CONNECTOR_ROOT,
-            connector_tfvars(aws_region, test_role_arn, [external_id], server.url),
+            CONNECTOR_ROOT, connector_tfvars(aws_region, test_role_arn, server.url)
         )
-        with connector_applied(CONNECTOR_ROOT, destroy_after=not keep_after) as (
-            outputs,
-            log,
-        ):
+        with connector_applied(
+            CONNECTOR_ROOT,
+            boto3_session.client("ssm", region_name=aws_region),
+            [external_id],
+            new_registration_token(),
+            destroy_after=not keep_after,
+        ) as (outputs, log):
             yield {
                 "outputs": outputs,
                 "log": log,
@@ -80,8 +85,6 @@ def test_install(connector, iam_client, events_client, aws_region):
     # The tenant's Region, not the control plane's bus Region.
     assert outputs["region"] == aws_region
     assert outputs["excluded_accounts_parameter"] == EXCLUDED_ACCOUNTS_PARAMETER
-    # Terraform leaves null outputs out of `terraform output -json`.
-    assert outputs.get("registered") is None
 
     role = iam_client.get_role(RoleName=outputs["role_name"])["Role"]
     tags = {tag["Key"]: tag["Value"] for tag in role.get("Tags", [])}
@@ -118,12 +121,6 @@ def test_external_id_not_exposed(connector, iam_client, events_client):
         ResourceARN=outputs["event_rule_arn"]
     )["Tags"]
     assert external_id not in json.dumps(rule_tags)
-
-
-def test_no_token_makes_no_request(connector):
-    """Without a registration token, the module doesn't call LoopProof."""
-    assert connector["server"].requests == []
-    assert connector["outputs"].get("registered") is None
 
 
 def test_trust(connector, boto3_session, aws_region, iam_client):
@@ -299,11 +296,9 @@ def test_connector_permissions_simulated(
     "action, name, decision",
     [
         ("ssm:GetParameter", EXCLUDED_ACCOUNTS_PARAMETER, "allowed"),
-        (
-            "ssm:GetParameter",
-            f"/loopproof/{TEST_ENVIRONMENT}/external-id",
-            "implicitDeny",
-        ),
+        # LoopProof's role can't read the tenant's copies of the ExternalIds and the token.
+        ("ssm:GetParameter", EXTERNAL_IDS_PARAMETER, "implicitDeny"),
+        ("ssm:GetParameter", REGISTRATION_TOKEN_PARAMETER, "implicitDeny"),
         ("ssm:GetParameters", EXCLUDED_ACCOUNTS_PARAMETER, "implicitDeny"),
         ("ssm:GetParametersByPath", f"/loopproof/{TEST_ENVIRONMENT}", "implicitDeny"),
         ("ssm:GetParameterHistory", EXCLUDED_ACCOUNTS_PARAMETER, "implicitDeny"),
@@ -391,7 +386,10 @@ def test_connector_reads_excluded_accounts(connector, boto3_session, aws_region)
         "ssm"
     )
     refused: List[Callable[[], Any]] = [
-        lambda: ssm.get_parameter(Name=f"/loopproof/{TEST_ENVIRONMENT}/external-id"),
+        lambda: ssm.get_parameter(Name=EXTERNAL_IDS_PARAMETER, WithDecryption=True),
+        lambda: ssm.get_parameter(
+            Name=REGISTRATION_TOKEN_PARAMETER, WithDecryption=True
+        ),
         lambda: ssm.get_parameters(Names=[EXCLUDED_ACCOUNTS_PARAMETER]),
         lambda: ssm.get_parameters_by_path(Path=f"/loopproof/{TEST_ENVIRONMENT}"),
         lambda: ssm.get_parameter_history(Name=EXCLUDED_ACCOUNTS_PARAMETER),

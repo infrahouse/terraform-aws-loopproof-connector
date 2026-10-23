@@ -15,9 +15,12 @@ variable "control_plane_account_id" {
   type = string
 }
 
-variable "external_ids" {
-  type      = list(string)
-  sensitive = true
+variable "external_ids_parameter_arn" {
+  type = string
+}
+
+variable "registration_token_parameter_arn" {
+  type = string
 }
 
 variable "event_bus_arn" {
@@ -26,12 +29,6 @@ variable "event_bus_arn" {
 
 variable "registration_url" {
   type = string
-}
-
-variable "registration_token" {
-  type      = string
-  sensitive = true
-  default   = null
 }
 
 variable "severities" {

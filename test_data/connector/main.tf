@@ -12,17 +12,35 @@ resource "aws_cloudwatch_event_bus" "control_plane" {
   name     = "loopproof-${var.environment}-findings"
 }
 
+# Part 1, as the README tells a tenant to write it: the two parameters, each created with the
+# write-only placeholder "unset", which the tests then fill as a tenant does.
+resource "aws_ssm_parameter" "loopproof_external_ids" {
+  name             = "/loopproof/${var.environment}/external-ids"
+  description      = "ExternalIds that LoopProof ${var.environment} presents to the connector role, as a JSON list."
+  type             = "SecureString"
+  value_wo         = "unset"
+  value_wo_version = 1
+}
+
+resource "aws_ssm_parameter" "loopproof_registration_token" {
+  name             = "/loopproof/${var.environment}/registration-token"
+  description      = "Registration token from LoopProof ${var.environment}'s onboarding."
+  type             = "SecureString"
+  value_wo         = "unset"
+  value_wo_version = 1
+}
+
 module "connector" {
   source = "../../"
 
-  environment              = var.environment
-  control_plane_account_id = data.aws_caller_identity.current.account_id
-  external_ids             = var.external_ids
-  event_bus_arn            = aws_cloudwatch_event_bus.control_plane.arn
-  registration_url         = var.registration_url
-  registration_token       = var.registration_token
-  severities               = var.severities
-  excluded_accounts        = var.excluded_accounts
+  environment                      = var.environment
+  control_plane_account_id         = data.aws_caller_identity.current.account_id
+  external_ids_parameter_arn       = aws_ssm_parameter.loopproof_external_ids.arn
+  registration_token_parameter_arn = aws_ssm_parameter.loopproof_registration_token.arn
+  event_bus_arn                    = aws_cloudwatch_event_bus.control_plane.arn
+  registration_url                 = var.registration_url
+  severities                       = var.severities
+  excluded_accounts                = var.excluded_accounts
 }
 
 # Probe roles stand in for the control plane's roles. "probe" matches loopproof-<environment>-*,
