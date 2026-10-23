@@ -95,9 +95,10 @@ the module in. The ARN is just a hint: LoopProof proves the account by assuming 
 
 Keep the token in its parameter after the connector registers, expired or not. The registration runs again when the
 role is replaced, or with `terraform apply -replace`, with the token in the parameter, and LoopProof answers `200` to
-the token that registered the role, whatever its expiry. It issues a new token only until your tenant is
-provisioned, so after that, a parameter put back to `unset`, or holding another value, makes such a registration fail
-on every apply. The token gives nothing once spent but that repeat: LoopProof refuses it for any other role.
+its tenant's token for the role it already has, whatever the token's expiry. A parameter put back to `unset`, or
+holding another value, makes such a registration fail on every apply, until it holds a token from LoopProof again; a
+lost token has to come from LoopProof. Once spent, the token gives nothing but that repeat: LoopProof refuses it for
+any other role.
 
 ## Debug logs
 

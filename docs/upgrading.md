@@ -23,10 +23,9 @@ stay as they are, and none is replaced.
 1. **Check the machine that runs Terraform:** Linux or macOS, `curl` 7.76.0 or later, HTTPS access to
    `registration_url`, and Terraform 1.11 or later.
 2. **Find the registration token you installed with.** The upgrade registers the role once more, with the token in
-   the parameter. LoopProof answers `200` to the token that registered this role, whatever its expiry, but it issues a
-   new token only until the tenant is provisioned, which an installed tenant usually is. Without the original token,
-   the upgrade's apply fails at the registration, and so does every apply after it, the registration staying tainted:
-   don't upgrade until you have it.
+   the parameter, and LoopProof answers `200` to its tenant's token for the role it already has, whatever the token's
+   expiry. Without a token that works, the upgrade's apply fails at the registration, and so does every apply after
+   it, the registration staying tainted. If you no longer have it, get a new one from LoopProof before you upgrade.
 3. **Add Part 1** to the root, the two parameters, as in [Getting Started](getting-started.md#first-deployment).
 4. **Change the module call:** set `version` to this release, remove `external_ids` and `registration_token`, and add
    `external_ids_parameter_arn` and `registration_token_parameter_arn` with the two parameters' ARNs. Remove the
