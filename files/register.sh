@@ -35,6 +35,22 @@ if ! command -v curl > /dev/null 2>&1; then
     exit 1
 fi
 
+# --fail-with-body arrived in curl 7.76.0. An older curl would refuse the option, and the call would read as no
+# answer. A version this can't parse is left to curl.
+curl_version=$(curl --version 2> /dev/null | sed -n '1s/^curl \([0-9][0-9]*\.[0-9][0-9]*[0-9.]*\).*/\1/p')
+curl_major=${curl_version%%.*}
+curl_minor=${curl_version#*.}
+curl_minor=${curl_minor%%.*}
+if [ -n "$curl_version" ]; then
+    if [ "$curl_major" -lt 7 ] || { [ "$curl_major" -eq 7 ] && [ "$curl_minor" -lt 76 ]; }; then
+        printf '%s\n' \
+            "The LoopProof connector registers the connector role with curl 7.76.0 or later, and this machine has" \
+            "curl $curl_version. Upgrade curl and apply again."
+        paste_instead
+        exit 1
+    fi
+fi
+
 not_a_token() {
     printf '%s\n' \
         "The SSM parameter $LOOPPROOF_TOKEN_PARAMETER_ARN doesn't hold a registration token:" \

@@ -30,6 +30,10 @@ BODY = f'{{"role_arn":"{ROLE_ARN}","region":"us-west-2"}}'
 # --write-out, exit 22 on an HTTP error, and for "drop" no answer, as curl reports an empty reply.
 FAKE_CURL = dedent("""\
     #!/bin/sh
+    if [ "$1" = --version ]; then
+        echo "curl ${FAKE_CURL_VERSION:-8.7.1} (stand-in) libcurl/${FAKE_CURL_VERSION:-8.7.1}"
+        exit 0
+    fi
     n=$(($(cat "$FAKE_CURL_DIR/calls" 2> /dev/null || echo 0) + 1))
     echo "$n" > "$FAKE_CURL_DIR/calls"
     for argument in "$@"; do printf '%s\\n' "$argument"; done > "$FAKE_CURL_DIR/argv.$n"
@@ -52,13 +56,16 @@ FAKE_CURL = dedent("""\
     """)
 
 
-def run_script(directory: str, token: str, answers: List[str]) -> Dict[str, object]:
+def run_script(
+    directory: str, token: str, answers: List[str], curl_version: str = "8.7.1"
+) -> Dict[str, object]:
     """
     Run the script with the stand-in curl.
 
     :param directory: An empty directory for the stand-in and its records.
     :param token: The registration token the script gets.
     :param answers: The stand-in's answers, one per call; the last repeats.
+    :param curl_version: The version the stand-in reports.
     :return: The script's exit code and output, and each call's arguments and standard input.
     """
     curl = osp.join(directory, "curl")
@@ -73,6 +80,7 @@ def run_script(directory: str, token: str, answers: List[str]) -> Dict[str, obje
             **os.environ,
             "PATH": f"{directory}{os.pathsep}{os.environ['PATH']}",
             "FAKE_CURL_DIR": directory,
+            "FAKE_CURL_VERSION": curl_version,
             "LOOPPROOF_REGISTRATION_TOKEN": token,
             "LOOPPROOF_REGISTRATION_URL": "https://api.loopproof.invalid/connector/registrations",
             "LOOPPROOF_REGISTRATION_BODY": BODY,
@@ -192,3 +200,25 @@ def test_not_a_token(
     )
     if echo is not None:
         assert echo not in result["output"]
+
+
+@pytest.mark.parametrize(
+    "curl_version, calls",
+    [("7.61.1", 0), ("7.75.0", 0), ("6.5.2", 0), ("7.76.0", 1), ("8.5.0", 1)],
+    ids=["rhel-8", "7.75", "6.x", "7.76", "noble"],
+)
+def test_curl_version(
+    aws_provider_version, tmp_path, curl_version, calls
+):  # pylint: disable=unused-argument
+    """A curl older than 7.76.0, which lacks --fail-with-body, fails before any call, saying so."""
+    result = run_script(str(tmp_path), new_registration_token(), ["200"], curl_version)
+
+    assert len(result["calls"]) == calls
+    if calls:
+        assert result["returncode"] == 0, result["output"]
+    else:
+        assert result["returncode"] == 1
+        assert (
+            "registers the connector role with curl 7.76.0 or later, and this machine has"
+            f" curl {curl_version}." in " ".join(result["output"].split())
+        )
