@@ -58,6 +58,25 @@ UNCALLED_REGISTRATION_URL = "https://api.loopproof.invalid/connector/registratio
 SAMPLE_EVENT_PATH = osp.join(osp.dirname(__file__), "data", "findings-imported-v2.json")
 # How many times the module's script calls the API before it gives up on a 5xx or a connection error.
 REGISTRATION_ATTEMPTS = 4
+# What the module's script says when the registration fails. Where a new registration token comes from,
+# and whether LoopProof takes the role's ARN and Region pasted into its onboarding, depend on whether
+# LoopProof has proven the tenant's account, which the script can't see, so it says both.
+NEW_TOKEN_BEFORE_PROOF = (
+    "Before LoopProof has proven your account, a new registration token comes from"
+    " LoopProof's onboarding."
+)
+NEW_TOKEN_AFTER_PROOF = (
+    "Once it has, an admin of your tenant mints one on LoopProof's Settings page."
+    " A minted token registers only the role your tenant already has."
+)
+PASTE_BEFORE_PROOF = (
+    "Before LoopProof has proven your account, you can paste the connector role ARN and"
+    " the Region into LoopProof's onboarding instead:"
+)
+NO_PASTE_AFTER_PROOF = (
+    "Once LoopProof has proven your account, it takes no paste: the registration needs a"
+    " registration token and a machine that reaches LoopProof."
+)
 
 # A new or changed trust policy can take a minute or more to apply everywhere in IAM.
 IAM_PROPAGATION_TIMEOUT = 300
