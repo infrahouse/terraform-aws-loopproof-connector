@@ -1,15 +1,16 @@
 output "role_arn" {
   description = <<-EOT
-    ARN of the connector role. Paste it into LoopProof's onboarding, with region, if the registration call can't
-    succeed, such as from a machine that can't reach LoopProof.
+    ARN of the connector role. Before LoopProof has proven your account, paste it into LoopProof's onboarding, with
+    region, if the registration call can't succeed, such as from a machine that can't reach LoopProof. After,
+    LoopProof takes no paste.
   EOT
   value       = aws_iam_role.connector.arn
 }
 
 output "region" {
   description = <<-EOT
-    Region the module is applied in, where LoopProof reads the Security Hub findings. Paste it into LoopProof's
-    onboarding with role_arn if the registration call can't succeed.
+    Region the module is applied in, where LoopProof reads the Security Hub findings. Before LoopProof has proven
+    your account, paste it into LoopProof's onboarding with role_arn if the registration call can't succeed.
   EOT
   value       = local.region
 }
