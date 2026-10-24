@@ -6,8 +6,13 @@
 #   LOOPPROOF_REGISTRATION_URL     where to POST
 #   LOOPPROOF_REGISTRATION_BODY    {"role_arn": ..., "region": ...}, as JSON
 #   LOOPPROOF_TOKEN_PARAMETER_ARN  the token's parameter, which the messages name
-#   LOOPPROOF_ROLE_ARN             the messages give both, to paste into LoopProof instead
+#   LOOPPROOF_ROLE_ARN             the messages give both, to paste into LoopProof's onboarding instead
 #   LOOPPROOF_REGION
+#
+# Where a new registration token comes from, and whether LoopProof takes the paste, depend on whether
+# LoopProof has proven the tenant's account, which this script can't see, so the messages say both:
+# before, the token comes from LoopProof's onboarding, which takes the paste too; after, a tenant admin
+# mints one on LoopProof's Settings page, and LoopProof takes no paste.
 #
 # Terraform shows everything this script prints when it fails, so it never prints the token or the
 # request: no set -x, no curl -v. The token reaches curl on its standard input, from printf, a shell
@@ -20,11 +25,21 @@ set -u
 
 attempts=4
 
+new_token_from() {
+    printf '%s\n' \
+        "Before LoopProof has proven your account, a new registration token comes from LoopProof's onboarding." \
+        "Once it has, an admin of your tenant mints one on LoopProof's Settings page." \
+        "A minted token registers only the role your tenant already has."
+}
+
 paste_instead() {
     printf '%s\n' \
-        "Or paste the connector role ARN and the Region into LoopProof's onboarding:" \
+        "Before LoopProof has proven your account, you can paste the connector role ARN and the Region into" \
+        "LoopProof's onboarding instead:" \
         "Role ARN: $LOOPPROOF_ROLE_ARN" \
-        "Region: $LOOPPROOF_REGION"
+        "Region: $LOOPPROOF_REGION" \
+        "Once LoopProof has proven your account, it takes no paste: the registration needs a registration token" \
+        "and a machine that reaches LoopProof."
 }
 
 if ! command -v curl > /dev/null 2>&1; then
@@ -54,7 +69,9 @@ fi
 not_a_token() {
     printf '%s\n' \
         "The SSM parameter $LOOPPROOF_TOKEN_PARAMETER_ARN doesn't hold a registration token:" \
-        "a token starts with \"lprt_\" and holds no spaces. Copy it from LoopProof's onboarding, and apply again."
+        "a token starts with \"lprt_\" and holds no spaces. Put the registration token LoopProof showed you in it, or" \
+        "a new one, and apply again."
+    new_token_from
     paste_instead
     exit 1
 }
@@ -64,7 +81,8 @@ case $LOOPPROOF_REGISTRATION_TOKEN in
     unset)
         printf '%s\n' \
             "The SSM parameter $LOOPPROOF_TOKEN_PARAMETER_ARN still holds the placeholder \"unset\"." \
-            "Put the registration token from LoopProof's onboarding in it, and apply again."
+            "Put the registration token LoopProof showed you in it, or a new one, and apply again."
+        new_token_from
         paste_instead
         exit 1
         ;;
@@ -112,6 +130,7 @@ while :; do
             printf '\n%s\n' \
                 "Get a new registration token in LoopProof and put it in the SSM parameter" \
                 "$LOOPPROOF_TOKEN_PARAMETER_ARN, then apply again."
+            new_token_from
             paste_instead
             exit 1
             ;;
