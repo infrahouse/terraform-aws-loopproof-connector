@@ -103,12 +103,20 @@ linked Region, and `GetFindingsV2` can read them all.
    refuses your events; see [Troubleshooting](troubleshooting.md#eventbridge-reports-failed-invocations).
 
 Later plans and applies read the parameters but never call LoopProof. Keep both parameters, since the module reads
-them on every plan, and keep the token in its parameter: it registers the role again when the role is replaced, and
-a lost token has to come from LoopProof. See [Security](security.md#the-registration-token).
+them on every plan, and keep the token in its parameter: it registers the role again when the role is replaced. A
+lost token has to come from LoopProof: before LoopProof has proven your account, a new one comes from its onboarding;
+after, an admin of your tenant mints one on LoopProof's Settings page. See
+[Security](security.md#the-registration-token).
 
 ## A machine that can't reach LoopProof
 
 The registration needs HTTPS from the machine that runs Terraform to `registration_url`. Without it, step 4 creates
 everything else, then fails at the registration with `curl`'s error, the role's ARN and the Region. Paste those into
-LoopProof's onboarding: that registers the role without a token. The registration stays tainted, so each later apply
-tries again and fails the same way, until one runs from a machine that can reach LoopProof.
+LoopProof's onboarding: before LoopProof has proven your account, that registers the role without a token. The
+registration stays tainted, so each later apply tries again and fails the same way, until one runs from a machine
+that can reach LoopProof.
+
+Once LoopProof has proven your account, it takes no paste: the registration needs a registration token and a machine
+that reaches LoopProof. Replace the role, or run `terraform apply -replace` on the registration, from such a machine.
+See
+[Troubleshooting](troubleshooting.md#the-registration-fails-on-every-apply-from-a-machine-that-cant-reach-loopproof).

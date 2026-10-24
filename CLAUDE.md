@@ -25,14 +25,17 @@ It creates:
 - `/loopproof/<environment>/excluded-accounts`: a standard `String` SSM parameter, always created, holding
   `excluded_accounts` sorted as JSON (`[]` when empty), which the connector role may `ssm:GetParameter` (its policy
   `excluded-accounts-parameter`) and nothing else in SSM. LoopProof reads it at onboarding and daily; a
-  registration token works only until the tenant is provisioned, and the list changes after that;
+  registration token sets the role only while the tenant is provisional, and the list changes after that;
 - `terraform_data.registration`, keyed on the role's ARN, whose `local-exec` runs `/bin/sh files/register.sh` once,
   when the resource is created: on the apply that creates the role, when the role is replaced, and with
   `terraform apply -replace`. The script POSTs `{"role_arn": ..., "region": ...}` to `registration_url` with `curl`,
   the token from the token parameter in `Authorization`, retrying connection errors and 5xx, never a 4xx. A failure
   fails the apply and taints the resource, so the next apply calls again. `region` is the AWS provider's Region,
   where the tenant applies the module: LoopProof reads the tenant's Security Hub there, and an IAM ARN carries no
-  Region.
+  Region. What a failure tells the tenant to do depends on whether LoopProof has proven the account, which the
+  script can't see, so its messages say both: a new token comes from LoopProof's onboarding before and from the
+  Settings page after, where an admin mints one that registers only the tenant's role; and the role's ARN and
+  Region, which every failure prints, are a paste into onboarding only before (`tests/test_register_script.py`).
 
 The tenant's root creates two SSM SecureString parameters, `/loopproof/<environment>/external-ids` (a JSON list) and
 `/loopproof/<environment>/registration-token`, with the write-only placeholder `unset` (`value_wo`, Terraform 1.11),

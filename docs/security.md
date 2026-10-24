@@ -96,9 +96,18 @@ the module in. The ARN is just a hint: LoopProof proves the account by assuming 
 Keep the token in its parameter after the connector registers, expired or not. The registration runs again when the
 role is replaced, or with `terraform apply -replace`, with the token in the parameter, and LoopProof answers `200` to
 its tenant's token for the role it already has, whatever the token's expiry. A parameter put back to `unset`, or
-holding another value, makes such a registration fail on every apply, until it holds a token from LoopProof again; a
-lost token has to come from LoopProof. Once spent, the token gives nothing but that repeat: LoopProof refuses it for
-any other role.
+holding another value, makes such a registration fail on every apply, until it holds a token from LoopProof again.
+Once spent, the token gives nothing but that repeat: LoopProof refuses it for any other role.
+
+A lost token is replaced in LoopProof, and where depends on whether LoopProof has proven your account:
+
+* before, LoopProof's onboarding gives a new one, and also takes the role's ARN and the Region pasted in instead;
+* after, an admin of your tenant mints one on LoopProof's Settings page, and LoopProof takes no paste. A minted token
+  registers only the role your tenant already has, and changes nothing at LoopProof. Only the tenant's admins can
+  mint one, and LoopProof records each mint in the tenant's audit trail.
+
+A new token, from either place, replaces the one before it, which stops working at once, the one in your parameter
+included. The module can't tell which case applies, so its error messages name both.
 
 ## Debug logs
 
