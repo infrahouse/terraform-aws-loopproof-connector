@@ -14,6 +14,10 @@ import pytest
 
 from tests.conftest import (
     CONNECTOR_ROOT,
+    NEW_TOKEN_AFTER_PROOF,
+    NEW_TOKEN_BEFORE_PROOF,
+    NO_PASTE_AFTER_PROOF,
+    PASTE_BEFORE_PROOF,
     REGISTRATION_ADDRESS,
     REGISTRATION_ATTEMPTS,
     ROLE_ADDRESS,
@@ -133,7 +137,10 @@ def test_dropped_connection_retried(connector):
 
 
 def test_5xx_until_attempts_run_out(connector, aws_region):
-    """A 5xx on every attempt fails the apply after the last one, with the role ARN and Region to paste."""
+    """
+    A 5xx on every attempt fails the apply after the last one, with the role ARN and Region to paste
+    before LoopProof has proven the account.
+    """
     server: RegistrationServer = connector["server"]
     server.answer(502)
     calls = len(server.requests)
@@ -144,10 +151,12 @@ def test_5xx_until_attempts_run_out(connector, aws_region):
     assert len(server.requests) == calls + REGISTRATION_ATTEMPTS
     assert re.search(r"HTTP/[0-9.]+ 502\b", message)
     assert f"after {REGISTRATION_ATTEMPTS} attempts" in message
-    assert connector["outputs"]["role_arn"] in message
-    assert f"Region: {aws_region}" in message
+    assert (
+        f"{PASTE_BEFORE_PROOF} Role ARN: {connector['outputs']['role_arn']}"
+        f" Region: {aws_region} {NO_PASTE_AFTER_PROOF}" in message
+    )
     # LoopProof failed, not the token: the message doesn't ask for a new one.
-    assert "Get a new registration token" not in message
+    assert "a new registration token" not in message.lower()
     assert connector["token"] not in message
 
 
@@ -164,11 +173,18 @@ def test_4xx_not_retried(connector):
         assert len(server.requests) == calls + 1, status
         assert re.search(rf"HTTP/[0-9.]+ {status}\b", message)
         assert "Get a new registration token in LoopProof" in message
+        assert f"{NEW_TOKEN_BEFORE_PROOF} {NEW_TOKEN_AFTER_PROOF}" in message
+        assert PASTE_BEFORE_PROOF in message
+        assert NO_PASTE_AFTER_PROOF in message
         assert connector["token"] not in message
 
 
 def test_no_curl(connector, tmp_path):
-    """Without curl on PATH, the registration fails with a plain message and calls nothing."""
+    """
+    Without curl on PATH, the registration fails with a plain message and calls nothing. Before
+    LoopProof has proven the account, the paste works instead; after, the registration needs a token
+    and a machine that reaches LoopProof.
+    """
     server: RegistrationServer = connector["server"]
     server.answer(200)
     calls = len(server.requests)
@@ -178,4 +194,7 @@ def test_no_curl(connector, tmp_path):
     message = printed(result)
     assert result.returncode != 0
     assert "registers the connector role with curl, which isn't on PATH" in message
+    assert PASTE_BEFORE_PROOF in message
+    assert NO_PASTE_AFTER_PROOF in message
+    assert "a new registration token" not in message.lower()
     assert len(server.requests) == calls
