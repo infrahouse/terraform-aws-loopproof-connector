@@ -195,9 +195,17 @@ LoopProof reads your Security Hub findings in that Region, the AWS provider's Re
 Security Hub's home Region, if you install it [where it belongs](#where-to-install-it). An IAM role ARN names no
 Region, so LoopProof can't learn it from the ARN.
 
-* **A refused call** (HTTP 4xx, such as an expired token) fails the apply. The error shows LoopProof's answer, says
-  to get a new registration token in LoopProof and put it in the token parameter, and gives the role's ARN and the
-  Region, to paste into LoopProof instead. 4xx answers aren't retried.
+* **A refused call** (HTTP 4xx, such as an expired token) fails the apply. The error shows LoopProof's answer and
+  says to get a new registration token in LoopProof and put it in the token parameter. 4xx answers aren't retried.
+* **Where a new token comes from** depends on whether LoopProof has proven your account, a later onboarding step in
+  which it assumes the role. The module can't tell, so the error names both places:
+  * before, LoopProof's onboarding gives you one;
+  * after, an admin of your tenant mints one on LoopProof's Settings page, with "Mint a new registration token". A
+    minted token registers only the role your tenant already has: LoopProof answers `200` and changes nothing.
+
+  A new token replaces the one before it, which stops working at once, the one in your parameter included.
+* **The paste.** The error also gives the role's ARN and the Region. Before LoopProof has proven your account, you
+  can paste them into LoopProof's onboarding instead. After, LoopProof takes no paste.
 * **Once the new token is in the parameter, apply again.** The failed registration is tainted, so the plain apply
   registers by itself.
 * **Connection errors and 5xx answers** are retried, four attempts in all, before the apply fails the same way.
@@ -210,18 +218,26 @@ Region, so LoopProof can't learn it from the ARN.
 
 Leave the registration token in its parameter after the connector registers, expired or not. It is what registers
 the role again when the role is replaced, or with `terraform apply -replace`: LoopProof answers `200` to its tenant's
-token for the role it already has, whatever the token's expiry. A parameter put back to `unset`, or holding another
-value, makes the next of those registrations fail on every apply, until it holds a token from LoopProof again; a lost
-token has to come from LoopProof.
+token for the role it already has, whatever the token's expiry, until a new one replaces it. A parameter put back to
+`unset`, or holding another value, makes the next of those registrations fail on every apply, until it holds a token
+from LoopProof again: before LoopProof has proven your account, a new one from LoopProof's onboarding; after, one an
+admin of your tenant mints on LoopProof's Settings page.
 
 The ARN is only a hint: LoopProof proves the account later by assuming the role.
 
 ### A machine that can't reach LoopProof
 
 The registration needs HTTPS from the machine that runs Terraform to `registration_url`. Without it, the apply
-creates everything else, then fails at the registration with `curl`'s error, the role's ARN and the Region: paste
-those into LoopProof's onboarding, which registers the role without a token. The registration stays tainted, so
-each later apply tries again and fails the same way, until one runs from a machine that can reach LoopProof.
+creates everything else, then fails at the registration with `curl`'s error, the role's ARN and the Region. Before
+LoopProof has proven your account, paste those into LoopProof's onboarding, which registers the role without a
+token. The registration stays tainted, so each later apply tries again and fails the same way, until one runs from a
+machine that can reach LoopProof.
+
+Once LoopProof has proven your account, it takes no paste: the registration needs a registration token and a machine
+that reaches LoopProof. Replacing the role, or `terraform apply -replace` on the registration, from a machine that
+can't reach LoopProof, fails at the registration, and so does every later apply from it, until one runs from a
+machine that can. LoopProof keeps using the role meanwhile, since a replaced role keeps its ARN. See
+[Troubleshooting](https://infrahouse.github.io/terraform-aws-loopproof-connector/troubleshooting/).
 
 ### Excluding accounts
 
@@ -345,8 +361,8 @@ No modules.
 |------|-------------|
 | <a name="output_event_rule_arn"></a> [event\_rule\_arn](#output\_event\_rule\_arn) | ARN of the EventBridge rule that forwards Security Hub findings to LoopProof. |
 | <a name="output_excluded_accounts_parameter"></a> [excluded\_accounts\_parameter](#output\_excluded\_accounts\_parameter) | Name of the SSM parameter that publishes excluded\_accounts to LoopProof, /loopproof/<environment>/excluded-accounts. |
-| <a name="output_region"></a> [region](#output\_region) | Region the module is applied in, where LoopProof reads the Security Hub findings. Paste it into LoopProof's<br/>onboarding with role\_arn if the registration call can't succeed. |
-| <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | ARN of the connector role. Paste it into LoopProof's onboarding, with region, if the registration call can't<br/>succeed, such as from a machine that can't reach LoopProof. |
+| <a name="output_region"></a> [region](#output\_region) | Region the module is applied in, where LoopProof reads the Security Hub findings. Before LoopProof has proven<br/>your account, paste it into LoopProof's onboarding with role\_arn if the registration call can't succeed. |
+| <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | ARN of the connector role. Before LoopProof has proven your account, paste it into LoopProof's onboarding, with<br/>region, if the registration call can't succeed, such as from a machine that can't reach LoopProof. After,<br/>LoopProof takes no paste. |
 | <a name="output_role_name"></a> [role\_name](#output\_role\_name) | Name of the connector role, loopproof-<environment>-connector. |
 <!-- END_TF_DOCS -->
 
