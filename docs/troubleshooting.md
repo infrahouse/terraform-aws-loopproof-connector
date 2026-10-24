@@ -36,20 +36,47 @@ or `["<old>","<new>"]` during a rotation.
 LoopProof answered the registration with a 4xx. The role and the forwarding were created; only the registration
 failed, and it is tainted.
 
-* A `401` usually means the token expired (it's valid for 24 hours), was replaced by a newer one, or registered
-  nothing before the tenant was provisioned. A `409` means the token already registered another role.
-* Get a new registration token in LoopProof, put it in the token parameter, and run a plain `terraform apply`: the
-  tainted registration runs again by itself. The token the connector registered with also works again, if you still
-  have it: LoopProof keeps accepting its tenant's token for the role it already has.
-* Or paste the role ARN and the Region from the error, or the `role_arn` and `region` outputs, into LoopProof's
-  onboarding.
+* A `401` usually means the token expired before it registered anything (it's valid for 24 hours), or was replaced
+  by a newer one. A `409` means the token already registered another role or, once LoopProof has proven your account,
+  that this role isn't the one your tenant has; LoopProof's answer says which.
+* Get a new registration token, put it in the token parameter, and run a plain `terraform apply`: the tainted
+  registration runs again by itself. Where the token comes from depends on whether LoopProof has proven your account:
+  * before, from LoopProof's onboarding;
+  * after, an admin of your tenant mints one on LoopProof's Settings page, with "Mint a new registration token". A
+    minted token registers only the role your tenant already has, so it can't fix a `409`: nothing changes the role
+    LoopProof has for your tenant.
+
+  A new token replaces the one before it, which stops working at once.
+* The token the connector registered with also works again, if you still have it and no newer one has replaced it:
+  LoopProof keeps accepting its tenant's token for the role it already has.
+* Before LoopProof has proven your account, you can instead paste the role ARN and the Region from the error, or the
+  `role_arn` and `region` outputs, into LoopProof's onboarding. Once it has, LoopProof takes no paste.
 
 ## The apply fails with "didn't answer" or a 5xx
 
 The registration got no answer (DNS, a proxy, a firewall, a timeout) or LoopProof answered 5xx, four times. Apply
-again once `registration_url` is reachable from the machine that runs Terraform, or paste the role ARN and the Region
-into LoopProof. From a machine that can never reach LoopProof, each apply fails the same way; see
-[A machine that can't reach LoopProof](getting-started.md#a-machine-that-cant-reach-loopproof).
+again once `registration_url` is reachable from the machine that runs Terraform. Before LoopProof has proven your
+account, you can instead paste the role ARN and the Region into LoopProof's onboarding. Once it has, LoopProof takes
+no paste: the registration needs a registration token and a machine that reaches LoopProof. From a machine that can
+never reach LoopProof, each apply fails the same way; see
+[the next section](#the-registration-fails-on-every-apply-from-a-machine-that-cant-reach-loopproof).
+
+## The registration fails on every apply, from a machine that can't reach LoopProof
+
+The registration runs on the apply that creates the role, when the role is replaced, and with
+`terraform apply -replace` on `module.<name>.terraform_data.registration`. From a machine without HTTPS access to
+`registration_url`, it fails, stays tainted, and fails again on every later apply from that machine.
+
+* **Before LoopProof has proven your account,** paste the role ARN and the Region into LoopProof's onboarding, which
+  registers the role without a token, as in
+  [A machine that can't reach LoopProof](getting-started.md#a-machine-that-cant-reach-loopproof). The registration
+  stays tainted until an apply runs from a machine that reaches LoopProof.
+* **Once LoopProof has proven your account,** there is no way to register from that machine: LoopProof takes no
+  paste, and a registration token works only in a call that reaches LoopProof. Run one apply from a machine that
+  reaches LoopProof, with a registration token in the parameter: the one the connector registered with, if no newer
+  one has replaced it, or a new one an admin of your tenant mints on LoopProof's Settings page. Until then, LoopProof
+  keeps using the role, since a replaced role keeps its ARN, but every apply from the other machine fails at the
+  registration.
 
 ## The apply fails with "registers the connector role with curl, which isn't on PATH"
 

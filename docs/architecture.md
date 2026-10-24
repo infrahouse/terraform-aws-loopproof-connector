@@ -152,10 +152,17 @@ is created: `/bin/sh files/register.sh`, after the role and its policies exist. 
 4. succeeds on a 2xx; fails at once on a 4xx; tries again after a connection error, a timeout or a 5xx, four
    attempts in all.
 
-A failure prints LoopProof's answer, what to do, and the role's ARN and the Region to paste instead, and leaves the
-resource tainted, so the next apply runs it again. A replaced role has an unknown ARN in the plan, which replaces the
-resource and registers again; so does `terraform apply -replace`. Nothing else does: later plans and applies make no
-call. See [Security](security.md#the-registration-token) for what Terraform prints and stores.
+A failure prints LoopProof's answer and what to do, and leaves the resource tainted, so the next apply runs it
+again. A replaced role has an unknown ARN in the plan, which replaces the resource and registers again; so does
+`terraform apply -replace`. Nothing else does: later plans and applies make no call. See
+[Security](security.md#the-registration-token) for what Terraform prints and stores.
+
+What to do depends on whether LoopProof has proven the account, which the script can't see, so it says both:
+
+* a new registration token, where one helps, comes from LoopProof's onboarding before, and after, from LoopProof's
+  Settings page, where an admin of the tenant mints one that registers only the role the tenant already has;
+* the role's ARN and the Region, which it prints, can be pasted into LoopProof's onboarding instead only before.
+  After, LoopProof takes no paste, and the registration needs a token and a machine that reaches LoopProof.
 
 `region` is the AWS provider's Region, such as `us-east-1`: the Region the module is applied in, which should be
 Security Hub's home Region. LoopProof reads the findings there. An IAM role ARN carries no Region, so LoopProof can't

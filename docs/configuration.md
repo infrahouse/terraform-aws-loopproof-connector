@@ -83,11 +83,14 @@ excluded_accounts = ["111122223333", "444455556666"]
 
 | Output | Description |
 |--------|-------------|
-| `role_arn` | ARN of the connector role. Paste it into LoopProof, with `region`, if the registration call failed. |
-| `region` | The module's Region, where LoopProof reads the findings. Paste it with `role_arn` if registration failed. |
+| `role_arn` | ARN of the connector role, to paste with `region` if the registration call failed; see below. |
+| `region` | The module's Region, where LoopProof reads the findings, to paste with `role_arn`; see below. |
 | `role_name` | `loopproof-<environment>-connector` |
 | `event_rule_arn` | ARN of the EventBridge rule |
 | `excluded_accounts_parameter` | `/loopproof/<environment>/excluded-accounts`, which publishes `excluded_accounts` |
+
+Before LoopProof has proven your account, you can paste `role_arn` and `region` into LoopProof's onboarding if the
+registration call failed. Once it has, LoopProof takes no paste.
 
 No output contains an ExternalId or the token. 0.3.0's `registered` output is gone: an apply that finishes has
 registered the role, since a refused registration fails it.
@@ -120,10 +123,20 @@ exit status 1. Output: LoopProof refused the connector registration: HTTP/2 401
 LoopProof's answer: {"detail": "..."}
 Get a new registration token in LoopProof and put it in the SSM parameter
 arn:aws:ssm:us-east-1:111122223333:parameter/loopproof/production/registration-token, then apply again.
-Or paste the connector role ARN and the Region into LoopProof's onboarding:
+Before LoopProof has proven your account, a new registration token comes from LoopProof's onboarding.
+Once it has, an admin of your tenant mints one on LoopProof's Settings page.
+A minted token registers only the role your tenant already has.
+Before LoopProof has proven your account, you can paste the connector role ARN and the Region into
+LoopProof's onboarding instead:
 Role ARN: arn:aws:iam::111122223333:role/loopproof-production-connector
 Region: us-east-1
+Once LoopProof has proven your account, it takes no paste: the registration needs a registration token
+and a machine that reaches LoopProof.
 ```
+
+The script can't tell whether LoopProof has proven your account, so it names both cases. Every failure ends with the
+paste and its condition; a failure that may need a new token (a 4xx, the placeholder, or a value that isn't a token)
+also says where one comes from.
 
 ## Tags
 
