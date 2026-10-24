@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0] - 2026-10-24
+
+### Bug Fixes
+
+- Wrap the refusal message, and count an empty curl status as no answer
+- Refuse a curl older than 7.76.0 before the call, with a plain message
+
+### Documentation
+
+- The two-part install, the fill commands, permissions, the tainted retry and upgrading
+- CLAUDE.md's interface contract, credentials and testing for the parameters
+- Keep the spent token, upgrade with the install token, curl 7.76.0, saved plans, quiet rotation
+- Say a lost registration token comes from LoopProof, not when LoopProof issues one
+
+### Features
+
+- Read the ExternalIds and the registration token from SSM, and register once at apply
+
+### Testing
+
+- Install the connector from two SSM parameters and count the registration calls
+
 ## [0.3.0] - 2026-10-18
 
 ### Features
