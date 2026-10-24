@@ -12,6 +12,10 @@ import pytest
 
 from tests.conftest import (
     CONNECTOR_ROOT,
+    NEW_TOKEN_AFTER_PROOF,
+    NEW_TOKEN_BEFORE_PROOF,
+    NO_PASTE_AFTER_PROOF,
+    PASTE_BEFORE_PROOF,
     REGISTRATION_TOKEN_PARAMETER,
     TEST_ENVIRONMENT,
     connector_applied,
@@ -36,7 +40,10 @@ def test_refused_then_registered(
     registration_server,
     ssm_client,
 ):
-    """A 401 fails the apply with the fill-a-new-token message; the next plain apply registers."""
+    """
+    A 401 fails the apply with the fill-a-new-token message, which says where a new token comes from
+    and offers the paste only before LoopProof has proven the account; the next plain apply registers.
+    """
     external_id = new_external_id()
     expired = new_registration_token()
     renewed = new_registration_token()
@@ -70,8 +77,10 @@ def test_refused_then_registered(
             f" arn:aws:ssm:{aws_region}:" in message
         )
         assert f":parameter{REGISTRATION_TOKEN_PARAMETER}, then apply again." in message
+        assert f"{NEW_TOKEN_BEFORE_PROOF} {NEW_TOKEN_AFTER_PROOF}" in message
+        assert PASTE_BEFORE_PROOF in message
         assert f":role/loopproof-{TEST_ENVIRONMENT}-connector" in message
-        assert f"Region: {aws_region}" in message
+        assert f"Region: {aws_region} {NO_PASTE_AFTER_PROOF}" in message
         assert expired not in message
         assert external_id not in message
 
