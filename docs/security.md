@@ -109,6 +109,11 @@ A lost token is replaced in LoopProof, and where depends on whether LoopProof ha
 A new token, from either place, replaces the one before it, which stops working at once, the one in your parameter
 included. The module can't tell which case applies, so its error messages name both.
 
+A new token is unused, and LoopProof refuses an unused token once its 24 hours have passed. Register with it as soon
+as it is in the parameter: `terraform apply -replace=module.<name>.terraform_data.registration`, which LoopProof
+answers with `200` and which changes nothing, or a plain `terraform apply` if the registration is tainted. Once it has
+registered, it keeps working for the role until a newer one replaces it.
+
 ## Debug logs
 
 At `TF_LOG=DEBUG` the AWS provider logs the responses of its AWS calls, but an ephemeral resource's. A debug log of a
