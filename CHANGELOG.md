@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] - 2026-10-25
+
+### Bug Fixes
+
+- Register.sh names Settings for a new token, and offers the paste only before the proof (IH-116, slice 2)
+
+### Documentation
+
+- README and the paste outputs say where a new token comes from, and paste only before the proof (IH-116, slice 2)
+- Security, getting started, troubleshooting, configuration, architecture and upgrading follow the messages (IH-116, slice 2)
+- Register with a new token within its 24 hours (IH-116, slice 2, review round 1)
+
+### Testing
+
+- Register.sh says where a new token comes from, and pastes only before the proof (IH-116, slice 2)
+- The registration's integration tests check the new words, through Terraform (IH-116, slice 2)
+
 ## [1.0.0] - 2026-10-24
 
 ### Bug Fixes
