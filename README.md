@@ -223,6 +223,11 @@ token for the role it already has, whatever the token's expiry, until a new one 
 from LoopProof again: before LoopProof has proven your account, a new one from LoopProof's onboarding; after, one an
 admin of your tenant mints on LoopProof's Settings page.
 
+A new token is unused, and LoopProof refuses an unused token once its 24 hours have passed, so register with it as
+soon as it is in the parameter: `terraform apply -replace=module.<name>.terraform_data.registration`, which LoopProof
+answers with `200` and which changes nothing, or a plain `terraform apply` if the registration is tainted. Once it has
+registered, it keeps working for the role until a newer one replaces it.
+
 The ARN is only a hint: LoopProof proves the account later by assuming the role.
 
 ### A machine that can't reach LoopProof
