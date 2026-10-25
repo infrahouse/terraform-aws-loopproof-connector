@@ -29,7 +29,7 @@ from infrahouse_core.logging import setup_logging
 LOG = logging.getLogger(__name__)
 setup_logging(LOG, debug_botocore=False)
 
-MODULE_VERSION = "1.0.0"
+MODULE_VERSION = "1.0.1"
 
 TERRAFORM_ROOT_DIR = "test_data"
 CONNECTOR_ROOT = osp.join(TERRAFORM_ROOT_DIR, "connector")

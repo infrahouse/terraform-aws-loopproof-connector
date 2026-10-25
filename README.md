@@ -81,7 +81,7 @@ with the AWS provider's credentials:
 ```hcl
 module "loopproof_connector" {
   source  = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
-  version = "1.0.0"
+  version = "1.0.1"
 
   environment                      = "production"
   control_plane_account_id         = "123456789012"
