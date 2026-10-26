@@ -8,20 +8,30 @@ A role of another environment, another account, or any caller without the Extern
 
 ## Permissions
 
-The role can read findings, set their status and comment, and read the list of the accounts you exclude, and nothing
-else:
+The role can read findings, set their status and comment, read the list of the accounts you exclude, and read the
+tags of the resources findings relate to, and nothing else:
 
 * `securityhub:GetFindings`, which `GetFindingsV2` requires;
 * `securityhub:BatchUpdateFindings`, which `BatchUpdateFindingsV2` requires, denied when the request sets
   `SeverityId` or sets neither `StatusId` nor `Comment`;
 * `ssm:GetParameter` on `/loopproof/<environment>/excluded-accounts` alone. That's a `String` parameter, which KMS
   doesn't encrypt, so the role has no KMS permission. It can't read the parameters that hold the ExternalIds and the
-  token.
+  token;
+* `ecr:ListTagsForResource` on the account's ECR repositories, in every Region: their tags, and nothing else of ECR,
+  not their images or settings;
+* with `enable_control_tower_aggregator_query`, `config:SelectAggregateResourceConfig` on AWS Control Tower's Config
+  aggregator alone, by its ARN, which the module looks up.
 
-There is no `iam:*`, no wildcard action, and no access to data outside Security Hub but that parameter. The two
-Security Hub actions take `"Resource": "*"`: their resource types are optional, and AWS doesn't document which ARN the
-V2 APIs are authorized against. `securityhub:GetFindings` also authorizes the ASFF `GetFindings` API of Security Hub
-CSPM; IAM can't tell the two apart.
+There is no `iam:*`, no wildcard action, and no write but a finding's status and comment. The two Security Hub
+actions take `"Resource": "*"`: their resource types are optional, and AWS doesn't document which ARN the V2 APIs are
+authorized against. `securityhub:GetFindings` also authorizes the ASFF `GetFindings` API of Security Hub CSPM; IAM
+can't tell the two apart.
+
+The aggregator query reads more than tags. A query can return any configuration the aggregator holds, of every
+resource of the organization's enrolled accounts in Control Tower's governed Regions, such as a security group's rules
+or a bucket's policy: IAM can't limit `SelectAggregateResourceConfig` to some fields, resource types or accounts.
+That's why it's off unless you turn it on. Without it, the role reads nothing of another account but the findings
+Security Hub collects.
 
 The forwarder role may only `events:PutEvents` on LoopProof's bus, and only EventBridge, for this rule, may assume it.
 
@@ -33,6 +43,9 @@ Besides what managing IAM roles, EventBridge rules and SSM parameters takes:
   apply, and Terraform refreshes Part 1's parameters.
 * `kms:Decrypt` on the key, if Part 1 gives the parameters a customer-managed key (`key_id`). With the default
   `aws/ssm`, whose key policy allows the account's principals to use it through SSM, nothing more is needed.
+* With `enable_control_tower_aggregator_query`, `cloudcontrol:GetResource`, `config:DescribeConfigurationAggregators`
+  and `config:ListTagsForResource`: the module looks Control Tower's aggregator up through Cloud Control, which calls
+  the last two, on every plan.
 
 Filling the parameters takes `ssm:PutParameter`, and with a customer-managed key `kms:Encrypt` and
 `kms:GenerateDataKey` too.
@@ -41,8 +54,9 @@ Filling the parameters takes `ssm:PutParameter`, and with a customer-managed key
 
 The findings of the accounts in `excluded_accounts` never leave your account: the forwarding rule drops them. IAM
 can't limit `securityhub:GetFindings` to some accounts, so the connector role can still read their findings through
-`GetFindingsV2`; LoopProof reads the list from the parameter to leave them out. The list itself isn't secret: the plan
-shows it, and anyone in your account allowed `ssm:GetParameter` on it can read it.
+`GetFindingsV2`, nor the aggregator query to some accounts; LoopProof reads the list from the parameter to leave them
+out. The list itself isn't secret: the plan shows it, and anyone in your account allowed `ssm:GetParameter` on it can
+read it.
 
 ## The ExternalId
 

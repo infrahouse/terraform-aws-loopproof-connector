@@ -93,6 +93,15 @@ The module reads both parameters on every plan. Check that they still exist, in 
 provider, and that your credentials allow `ssm:GetParameter` on them, and `kms:Decrypt` with a customer-managed key;
 see [Security](security.md#permissions-for-whoever-applies-it).
 
+## The plan fails with "reading Cloud Control API (AWS::Config::ConfigurationAggregator) ... couldn't find resource"
+
+`enable_control_tower_aggregator_query` is on, and Cloud Control found no aggregator named
+`aws-controltower-GuardrailsComplianceAggregator` in the AWS provider's account and Region. Control Tower keeps it in
+the Audit account, in Control Tower's home Region. Check that you apply the module there: in another account or
+Region, turn the input off, and LoopProof reads only the tags of the account's own repositories. If the plan fails
+with `AccessDeniedException` instead, your credentials need `cloudcontrol:GetResource`,
+`config:DescribeConfigurationAggregators` and `config:ListTagsForResource`.
+
 ## LoopProof reports AccessDenied when it assumes the role
 
 * The ExternalIds' parameter doesn't hold the value LoopProof holds. During a rotation, keep both values until

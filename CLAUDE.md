@@ -17,8 +17,18 @@ It creates:
 - `loopproof-<environment>-connector`: a role the control plane assumes (`aws:PrincipalArn` matching
   `loopproof-<environment>-*` in `control_plane_account_id`, plus `sts:ExternalId` from the ExternalIds
   parameter, below), allowed
-  `securityhub:GetFindings` and `securityhub:BatchUpdateFindings`, the latter limited by Deny statements on
-  `securityhub:OCSFSyntaxPath/*` to status and comment;
+  `securityhub:GetFindings` and `securityhub:BatchUpdateFindings` (its policy `security-hub-findings`), the latter
+  limited by Deny statements on `securityhub:OCSFSyntaxPath/*` to status and comment; and two reads of resource tags,
+  for the tags LoopProof derives from a related resource, such as an ECR image's repository (IH-120):
+  - `ecr:ListTagsForResource` on `arn:<partition>:ecr:*:<account>:repository/*`, every repository of the account in
+    every Region (`ecr-repository-tags`), always. `tag:GetResources` would serve too, but takes no resource ARN and
+    reads every tagged resource's tags;
+  - with `enable_control_tower_aggregator_query` (default `false`), `config:SelectAggregateResourceConfig` on AWS
+    Control Tower's Config aggregator, `aws-controltower-GuardrailsComplianceAggregator`, in the module's account and
+    Region, and no other (`control-tower-aggregator-query`). IAM names an aggregator by an ARN that ends in a
+    generated ID, and the AWS provider has no data source for one, so `data "aws_cloudcontrolapi_resource"` reads it
+    by name; the read fails the plan where there is none, which is why the input exists. LoopProof needs no grant to
+    find it: `SelectAggregateResourceConfig` takes the aggregator's name;
 - `loopproof-<environment>-findings`: an EventBridge rule for "Findings Imported V2" events by OCSF `severity_id`,
   and, when `excluded_accounts` isn't empty, `anything-but` those accounts on the finding's `cloud.account.uid`,
   targeting `event_bus_arn` through `loopproof-<environment>-forwarder`, which may only `events:PutEvents` there;
@@ -49,7 +59,8 @@ both reads wait for the parameters, and the run stops at the placeholder: apply,
 
 LoopProof's onboarding generates the module call, so the variable names (`environment`,
 `control_plane_account_id`, `external_ids_parameter_arn`, `registration_token_parameter_arn`, `event_bus_arn`,
-`registration_url`, `severities`, `excluded_accounts`) and outputs (`role_arn`, `region`, `role_name`,
+`registration_url`, `severities`, `excluded_accounts`, `enable_control_tower_aggregator_query`) and outputs
+(`role_arn`, `region`, `role_name`,
 `event_rule_arn`, `excluded_accounts_parameter`) are a contract. Don't rename them without a major version. So are:
 
 - the registration request body's fields, `role_arn` and `region`, which LoopProof's `POST /connector/registrations`
@@ -57,7 +68,9 @@ LoopProof's onboarding generates the module call, so the variable names (`enviro
 - the ExternalIds parameter's value, a JSON list of one or two ExternalIds, and the placeholder `unset` that both
   parameters hold until the tenant fills them, which LoopProof's generated Part 1 creates;
 - the excluded accounts' parameter, its name and its value, a JSON list of account IDs, which LoopProof reads with
-  the connector role.
+  the connector role;
+- the reads LoopProof calls with the connector role: `ListTagsForResource` on a repository's ARN, and
+  `SelectAggregateResourceConfig` with the aggregator's name, `aws-controltower-GuardrailsComplianceAggregator`.
 
 0.3.0's `external_ids` and `registration_token` inputs and `registered` output went in IH-114's major release.
 
@@ -100,7 +113,10 @@ Example: `make test-clean TEST_PATH=tests/test_rotation.py`.
 
 Integration tests with `pytest-infrahouse`, in the InfraHouse test account (`TEST_ROLE`, default region
 `us-west-2`). The test account plays the control plane: `test_data/connector` creates a bus in `us-west-1` and the
-probe roles `loopproof-pytest-probe` (matches the trust) and `outsider-pytest-probe` (doesn't).
+probe roles `loopproof-pytest-probe` (matches the trust) and `outsider-pytest-probe` (doesn't). It plays the tenant's
+resources too: `test_data/connector` creates the ECR repository `loopproof-pytest-tagged`, with a tag, and
+`test_config_aggregator.py` creates a stand-in for Control Tower's aggregator, by its name, with boto3 before the
+install, as Control Tower creates it before a tenant's.
 
 | File | Covers |
 |------|--------|
@@ -108,11 +124,13 @@ probe roles `loopproof-pytest-probe` (matches the trust) and `outsider-pytest-pr
 | `tests/test_registration_refused.py` | A 401 on the first registration, its message, the tainted retry |
 | `tests/test_registration.py` | No later call; `-replace`; a replaced role; retries; 4xx; no `curl` |
 | `tests/test_register_script.py` | `files/register.sh` with a stand-in `curl`: token on stdin only (no AWS) |
-| `tests/test_module.py` | Install, outputs, ExternalId exposure, trust, permissions, forwarding, `[]` |
+| `tests/test_module.py` | Install, outputs, ExternalId exposure, trust, permissions, tag read, forwarding, `[]` |
+| `tests/test_config_aggregator.py` | The aggregator query on: the looked-up ARN, the simulator, a query as the role |
 | `tests/test_excluded_accounts.py` | Two accounts excluded: pattern, matching, parameter, plan, reordering |
 | `tests/test_excluded_accounts_change.py` | `[]` → `[account]` → `[]`, each in place, then an empty plan |
 | `tests/test_rotation.py` | The parameter `[old]` → `[old, new]` → `[new]` without a failed AssumeRole |
-| `tests/test_validation.py` | Inputs and the ExternalIds parameter's contents, at plan |
+| `tests/test_upgrade.py` | 1.0.1 from the registry, then this checkout: only the new policy is added |
+| `tests/test_validation.py` | Inputs, the ExternalIds parameter's contents, the aggregator query without one, at plan |
 
 The connector tests install the tidy way, `connector_applied` in `conftest.py`: apply Part 1's parameters with
 `-target`, fill them, apply everything, with a stand-in for LoopProof's registration API on 127.0.0.1
@@ -122,6 +140,12 @@ runs the stand-in. `test_bootstrap.py` alone takes the first apply without `-tar
 Tests that change a deployment after its fixture applied it can't share a file with parametrized tests: pytest runs
 the parametrized cases grouped by index, after the later tests of the file. Put such a sequence in one test, in a file
 of its own, as `test_excluded_accounts_change.py` does.
+
+`test_upgrade.py` installs `test_data/upgrade`, a tenant's root, at `UPGRADE_FROM_VERSION` from the registry, by
+writing `main_override.tf` (gitignored) to swap the module's source, then removes it and plans this checkout: only
+`ADDED` may be created, only the role's `module_version` tag may change, and nothing registers again. A change that
+adds or changes a resource updates `ADDED`, or the test's other checks, and moves `UPGRADE_FROM_VERSION` to the
+latest release. Don't name it `*MODULE_VERSION`: bumpversion would rewrite it.
 
 `test_rotation.py` takes about 20 minutes on purpose. After a trust policy change, STS refuses a newly added
 ExternalId now and then for a few minutes (a value listed before and after is never refused), so each step waits

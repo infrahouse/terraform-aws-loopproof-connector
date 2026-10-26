@@ -86,6 +86,21 @@ module "loopproof_connector" {
 The next apply updates the forwarding rule and the parameter `/loopproof/<environment>/excluded-accounts`, which
 LoopProof reads. Set `excluded_accounts = []`, or remove it, to include the account again.
 
+## Resource tags with AWS Control Tower
+
+In the Audit account, in Control Tower's home Region, let LoopProof read the tags of your other accounts' resources
+from Control Tower's Config aggregator:
+
+```hcl
+module "loopproof_connector" {
+  # ...
+  enable_control_tower_aggregator_query = true
+}
+```
+
+The next apply adds the connector role's policy `control-tower-aggregator-query`, which may query that aggregator and
+no other. The tags of the Audit account's own ECR repositories need nothing: the role always reads them.
+
 ## Rotating the ExternalId
 
 The Terraform doesn't change; the parameter does.
