@@ -13,7 +13,7 @@ The LoopProof connector. LoopProof turns your AWS Security Hub findings into Lin
 the access it needs in your account, and nothing more:
 
 * a cross-account IAM role that LoopProof's control plane assumes, with an ExternalId, to read findings and set
-  their status and comment;
+  their status and comment, and to read the tags of the resources they relate to;
 * an EventBridge rule that forwards Security Hub's "Findings Imported V2" events of the severities you choose to
   LoopProof's event bus, except the findings of the accounts you exclude;
 * an SSM parameter that tells LoopProof which accounts you exclude;
@@ -27,6 +27,8 @@ permissions, a long-lived ExternalId in a tfvars file, and an ARN pasted into a 
 
 * trusts only LoopProof's own roles for your environment, by role name and ExternalId;
 * grants the two IAM actions the Security Hub v2 APIs need, and denies any update but status and comment;
+* reads tags only where it must: your ECR repositories', and AWS Control Tower's Config aggregator only if you turn
+  it on;
 * treats the ExternalId and the registration token as credentials: it reads both from SSM SecureString parameters
   in your account, never from its inputs, so neither is ever in your code or a tfvars file, and the token is in
   neither the plan nor the state;
@@ -39,6 +41,9 @@ permissions, a long-lived ExternalId in a tfvars file, and an ARN pasted into a 
   `loopproof-<environment>-*` roles presenting one of one or two ExternalIds
 * Least-privilege permissions: `securityhub:GetFindings` and `securityhub:BatchUpdateFindings`, the latter confined
   to the status and the comment
+* Resource tags: `ecr:ListTagsForResource` on your account's repositories, and, with
+  `enable_control_tower_aggregator_query`, `config:SelectAggregateResourceConfig` on Control Tower's Config aggregator
+  alone
 * Forwarding of new, updated and closed findings by OCSF severity, to a bus in another account and Region
 * Account exclusion: the findings of the accounts in `excluded_accounts` never leave your account, and the list is
   published in SSM for LoopProof to read
@@ -146,7 +151,10 @@ Besides managing IAM roles, EventBridge rules and SSM parameters:
 * `kms:Decrypt` on the key, if Part 1 gives the parameters a customer-managed key instead of the default
   `aws/ssm`, whose key policy already allows it to the account's principals;
 * `curl` 7.76.0 or later on the machine that runs Terraform, Linux or macOS, with HTTPS access to
-  `registration_url`. Windows isn't supported.
+  `registration_url`. Windows isn't supported;
+* with `enable_control_tower_aggregator_query`, `cloudcontrol:GetResource`, `config:DescribeConfigurationAggregators`
+  and `config:ListTagsForResource`: the module looks Control Tower's aggregator up through Cloud Control on every
+  plan.
 
 The fill commands need `ssm:PutParameter`, and with a customer-managed key `kms:Encrypt` and `kms:GenerateDataKey`.
 
@@ -269,12 +277,50 @@ module "loopproof_connector" {
   account's findings through `GetFindingsV2`. The list is how LoopProof knows to leave them out.
 * EventBridge limits a rule's pattern to 4096 characters, which holds about 250 excluded accounts.
 
+### Resource tags
+
+Where a finding's resource carries no tags, LoopProof takes them from a related resource: an ECR image's from its
+repository, which neither Inspector's nor Security Hub's finding carries. The connector role reads them one of two
+ways:
+
+* **In its own account.** The role may `ecr:ListTagsForResource` on every repository of the account you install it
+  in, in every Region, and nothing else of ECR. That's all a single account needs.
+* **From AWS Control Tower's Config aggregator,** for an organization with Control Tower, whose findings come from
+  other accounts. Turn it on where you install the connector, the Audit account:
+
+  ```hcl
+  module "loopproof_connector" {
+    # ...
+    enable_control_tower_aggregator_query = true
+  }
+  ```
+
+  The module looks up Control Tower's aggregator, `aws-controltower-GuardrailsComplianceAggregator`, in its own
+  account and Region, and lets the role `config:SelectAggregateResourceConfig` on it and on no other aggregator.
+  LoopProof queries it by its name. The plan fails if it isn't there: Control Tower keeps it in Control Tower's home
+  Region, so if that isn't the Region you apply the module in, leave this off.
+
+  A query can read whatever the aggregator holds: the configuration of every resource of the organization's enrolled
+  accounts, not only their tags, and the excluded accounts' too. IAM can't limit a query to some fields or accounts;
+  as with the findings, the excluded accounts' list is how LoopProof knows to leave them out.
+
+Where neither read reaches the related resource, LoopProof marks the tags as not derived; it never holds a ticket
+back for them.
+
 ### Events are refused until LoopProof proves the account
 
 Until LoopProof has proven your account (a later onboarding step, in which it assumes the role), its bus refuses
 your events. EventBridge doesn't retry a permission error; without a dead-letter queue, it drops the event and
 counts it in the rule's `FailedInvocations` metric. Nothing is lost: once the account is proven, LoopProof imports
 your findings' history through the connector role. You don't need to debug those failures.
+
+### Upgrading from 1.0.1
+
+Change the module's version and apply. The plan adds the connector role's policy `ecr-repository-tags` and changes
+the role's `module_version` tag in place; it replaces nothing, and the role doesn't register again. With AWS Control
+Tower, also set `enable_control_tower_aggregator_query = true` in the Audit account, which adds the policy
+`control-tower-aggregator-query`. See
+[Upgrading](https://infrahouse.github.io/terraform-aws-loopproof-connector/upgrading/).
 
 ### Upgrading from 0.3.0
 
@@ -333,13 +379,18 @@ No modules.
 | [aws_iam_role.connector](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role.forwarder](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.connector](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy.connector_control_tower_aggregator](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy.connector_excluded_accounts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy.connector_repository_tags](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy.forwarder](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_ssm_parameter.excluded_accounts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ssm_parameter) | resource |
 | [terraform_data.registration](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
+| [aws_cloudcontrolapi_resource.control_tower_aggregator](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/cloudcontrolapi_resource) | data source |
+| [aws_iam_policy_document.connector_control_tower_aggregator](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.connector_excluded_accounts](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.connector_permissions](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_iam_policy_document.connector_repository_tags](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.connector_trust](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.forwarder_permissions](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.forwarder_trust](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
@@ -352,6 +403,7 @@ No modules.
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_control_plane_account_id"></a> [control\_plane\_account\_id](#input\_control\_plane\_account\_id) | ID of LoopProof's control-plane AWS account for this environment. Twelve digits. | `string` | n/a | yes |
+| <a name="input_enable_control_tower_aggregator_query"></a> [enable\_control\_tower\_aggregator\_query](#input\_enable\_control\_tower\_aggregator\_query) | Let LoopProof query AWS Control Tower's AWS Config aggregator, aws-controltower-GuardrailsComplianceAggregator,<br/>for the tags of the resources in your organization's other accounts. Turn it on where Control Tower keeps that<br/>aggregator: the Audit account, in Control Tower's home Region, which must be the Region you apply the module in.<br/>The module looks the aggregator up by name and lets the connector role query it and no other aggregator. With<br/>this on, the plan fails if the aggregator isn't there. | `bool` | `false` | no |
 | <a name="input_environment"></a> [environment](#input\_environment) | LoopProof's environment, such as staging or production. It names the connector role<br/>(loopproof-<environment>-connector) and selects the control-plane roles allowed to assume it<br/>(loopproof-<environment>-*). | `string` | n/a | yes |
 | <a name="input_event_bus_arn"></a> [event\_bus\_arn](#input\_event\_bus\_arn) | ARN of LoopProof's control-plane EventBridge bus that receives the forwarded findings. | `string` | n/a | yes |
 | <a name="input_excluded_accounts"></a> [excluded\_accounts](#input\_excluded\_accounts) | IDs of the AWS accounts you exclude from LoopProof, such as an account outside your audit scope or a<br/>decommissioned one. The forwarding rule drops their findings, so they never leave this account, and the<br/>module publishes the list in the SSM parameter /loopproof/<environment>/excluded-accounts, where LoopProof<br/>reads it. A change takes effect on the next apply. | `list(string)` | `[]` | no |

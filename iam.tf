@@ -1,5 +1,5 @@
 # The connector role: LoopProof's control plane assumes it to read findings and update their
-# status and comment.
+# status and comment, and to read the tags of the resources the findings relate to.
 
 data "aws_iam_policy_document" "connector_trust" {
   statement {
@@ -117,6 +117,58 @@ resource "aws_iam_role_policy" "connector_excluded_accounts" {
   name   = "excluded-accounts-parameter"
   role   = aws_iam_role.connector.id
   policy = data.aws_iam_policy_document.connector_excluded_accounts.json
+}
+
+# Resource tags. Where a finding's resource carries no tags, LoopProof derives them from a related resource:
+# an ECR image's from its repository, which neither Inspector's nor Security Hub's finding carries.
+
+# The direct read, of this account's repositories. Every Region: Security Hub's home Region collects the
+# linked Regions' findings, and a repository is in its finding's Region. tag:GetResources would serve too,
+# but takes no resource ARN and reads every tagged resource; ecr:ListTagsForResource can be held to
+# repositories. It has no dependent actions, and tags aren't encrypted, so it needs no KMS permission.
+# https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonelasticcontainerregistry.html
+data "aws_iam_policy_document" "connector_repository_tags" {
+  statement {
+    sid       = "ReadRepositoryTags"
+    actions   = ["ecr:ListTagsForResource"]
+    resources = ["arn:${local.partition}:ecr:*:${local.account_id}:repository/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "connector_repository_tags" {
+  name   = "ecr-repository-tags"
+  role   = aws_iam_role.connector.id
+  policy = data.aws_iam_policy_document.connector_repository_tags.json
+}
+
+# The aggregator query, for a tenant with AWS Control Tower, whose Config aggregator holds the tags of the
+# organization's resources. IAM names the aggregator by its ARN, which the AWS provider has no data source
+# to look up, so Cloud Control reads it by name. The read fails where there's no such aggregator, hence the
+# input. LoopProof needs nothing to find it: SelectAggregateResourceConfig takes the aggregator's name.
+# https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsconfig.html
+data "aws_cloudcontrolapi_resource" "control_tower_aggregator" {
+  count      = var.enable_control_tower_aggregator_query ? 1 : 0
+  type_name  = "AWS::Config::ConfigurationAggregator"
+  identifier = local.control_tower_aggregator_name
+}
+
+data "aws_iam_policy_document" "connector_control_tower_aggregator" {
+  count = var.enable_control_tower_aggregator_query ? 1 : 0
+
+  statement {
+    sid     = "QueryControlTowerAggregator"
+    actions = ["config:SelectAggregateResourceConfig"]
+    resources = [
+      jsondecode(data.aws_cloudcontrolapi_resource.control_tower_aggregator[0].properties).ConfigurationAggregatorArn
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "connector_control_tower_aggregator" {
+  count  = var.enable_control_tower_aggregator_query ? 1 : 0
+  name   = "control-tower-aggregator-query"
+  role   = aws_iam_role.connector.id
+  policy = data.aws_iam_policy_document.connector_control_tower_aggregator[0].json
 }
 
 # The forwarder role: EventBridge assumes it to put the matching findings on the control-plane bus.
