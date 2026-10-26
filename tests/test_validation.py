@@ -371,7 +371,7 @@ def test_aggregator_query_without_aggregator(
 
     assert result.returncode != 0
     assert CONTROL_TOWER_AGGREGATOR in printed(result)
-    assert "was not found" in printed(result)
+    assert "couldn't find resource" in printed(result)
 
 
 @pytest.mark.parametrize(
