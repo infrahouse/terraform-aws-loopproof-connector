@@ -37,5 +37,10 @@ resource "terraform_data" "registration" {
 
   # LoopProof may assume the role as soon as it learns the ARN, and read the excluded accounts with it,
   # so register it with its permissions.
-  depends_on = [aws_iam_role_policy.connector, aws_iam_role_policy.connector_excluded_accounts]
+  depends_on = [
+    aws_iam_role_policy.connector,
+    aws_iam_role_policy.connector_excluded_accounts,
+    aws_iam_role_policy.connector_repository_tags,
+    aws_iam_role_policy.connector_control_tower_aggregator,
+  ]
 }
