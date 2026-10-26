@@ -196,9 +196,11 @@ def test_connector_queries_aggregator(connector, boto3_session, aws_region):
                 )
             )
         except ClientError as err:
-            # STS answers AccessDenied, AWS Config AccessDeniedException, until IAM has the change.
+            # Until IAM has the changes, STS answers AccessDenied, or InvalidClientTokenId for the new probe
+            # role's credentials, and AWS Config AccessDeniedException.
             if err.response["Error"]["Code"] in (
                 "AccessDenied",
+                "InvalidClientTokenId",
                 "AccessDeniedException",
             ):
                 return False
