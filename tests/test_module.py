@@ -437,9 +437,11 @@ def test_connector_reads_repository_tags(connector, boto3_session, aws_region):
             ).client("ecr")
             tags.append(ecr.list_tags_for_resource(resourceArn=repository_arn)["tags"])
         except ClientError as err:
-            # STS answers AccessDenied, ECR AccessDeniedException, until IAM has the change.
+            # Until IAM has the changes, STS answers AccessDenied, or InvalidClientTokenId for the new probe
+            # role's credentials, and ECR AccessDeniedException.
             if err.response["Error"]["Code"] in (
                 "AccessDenied",
+                "InvalidClientTokenId",
                 "AccessDeniedException",
             ):
                 return False
