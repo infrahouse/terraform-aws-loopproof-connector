@@ -10,6 +10,8 @@ flowchart LR
         CONN["Role loopproof-&lt;env&gt;-connector"]
         PARAM["SSM parameter /loopproof/&lt;env&gt;/excluded-accounts"]
         CREDS["SSM parameters: ExternalIds, registration token"]
+        ECR["ECR repositories, every Region"]
+        AGG["Control Tower's Config aggregator (if turned on)"]
         TF["Terraform, the applier's machine"]
         SH -- "Findings Imported V2" --> DB --> RULE
         RULE -. assumes .-> FWD
@@ -23,7 +25,10 @@ flowchart LR
     CPR -- "sts:AssumeRole + ExternalId" --> CONN
     CONN -- "GetFindingsV2, BatchUpdateFindingsV2" --> SH
     CONN -- "GetParameter" --> PARAM
+    CONN -- "ListTagsForResource" --> ECR
+    CONN -. "SelectAggregateResourceConfig" .-> AGG
     TF -- "reads" --> CREDS
+    TF -. "looks up, by name" .-> AGG
     TF -. "role ARN and Region, once, with curl" .-> API
 ```
 
@@ -47,7 +52,8 @@ Its inline policy `security-hub-findings`:
 | `DenyUpdatesWithoutStatusOrComment` | Deny | same | If it sets no `StatusId` and no `Comment` |
 
 Its inline policy `excluded-accounts-parameter` allows `ssm:GetParameter` on the
-[excluded accounts' parameter](#excluded-accounts) alone.
+[excluded accounts' parameter](#excluded-accounts) alone, and its policies `ecr-repository-tags` and, if you turn it
+on, `control-tower-aggregator-query` read [resource tags](#resource-tags).
 
 The Security Hub v2 APIs have no IAM actions of their own: `GetFindingsV2` uses `securityhub:GetFindings`, and
 `BatchUpdateFindingsV2` uses `securityhub:BatchUpdateFindings`
@@ -57,6 +63,48 @@ The Security Hub v2 APIs have no IAM actions of their own: `GetFindingsV2` uses 
 Those actions also authorize the older ASFF APIs. The `securityhub:OCSFSyntaxPath/<field>` condition key lets the
 policy refuse a severity change, and refuse any update that carries no OCSF status or comment, which includes every
 ASFF `BatchUpdateFindings` call.
+
+## Resource tags
+
+Where a finding's resource carries no tags, LoopProof derives them from a related resource: an ECR image's from its
+repository. Neither Inspector's finding nor Security Hub's carries the repository's tags, so LoopProof reads them with
+the connector role, one of two ways.
+
+**The direct read**, policy `ecr-repository-tags`, always there:
+
+| Statement | Effect | Action | Resource |
+|-----------|--------|--------|----------|
+| `ReadRepositoryTags` | Allow | `ecr:ListTagsForResource` | `arn:aws:ecr:*:<account>:repository/*` |
+
+Every repository of the account, in every Region: Security Hub's home Region collects the findings of the linked
+Regions, and a repository is in its finding's Region. The action has no dependent actions, and a repository's tags
+aren't encrypted with its key, so it needs no KMS permission
+([Service Authorization Reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonelasticcontainerregistry.html)).
+The Resource Groups Tagging API's `tag:GetResources` would read the tags too, but it takes no resource ARN in IAM and
+returns every tagged resource of the account, of every type.
+
+**The aggregator query**, policy `control-tower-aggregator-query`, with `enable_control_tower_aggregator_query`:
+
+| Statement | Effect | Action | Resource |
+|-----------|--------|--------|----------|
+| `QueryControlTowerAggregator` | Allow | `config:SelectAggregateResourceConfig` | Control Tower's aggregator's ARN |
+
+AWS Control Tower keeps an AWS Config aggregator, `aws-controltower-GuardrailsComplianceAggregator`, in the Audit
+account and its home Region, over the enrolled accounts, so the account where Security Hub collects findings can
+read the organization's resources' tags from it. IAM names an aggregator by an ARN that ends in an ID AWS Config
+generates, such as `arn:aws:config:us-west-1:<account>:config-aggregator/config-aggregator-a1b2c3d4`, and the AWS
+provider has no data source for aggregators, so the module reads it by name through Cloud Control
+(`data "aws_cloudcontrolapi_resource"`, type `AWS::Config::ConfigurationAggregator`), in its own account and Region,
+on every plan. The read fails where the aggregator doesn't exist, which is why the input is off by default.
+LoopProof needs nothing to find the aggregator: `SelectAggregateResourceConfig` takes its name
+([Service Authorization Reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsconfig.html),
+[SelectAggregateResourceConfig](https://docs.aws.amazon.com/config/latest/APIReference/API_SelectAggregateResourceConfig.html)).
+
+If Control Tower ever recreates the aggregator, its ID changes: until the next apply, the policy names the old ARN
+and LoopProof's query is refused. A plan shows the change.
+
+Where neither read reaches the related resource, LoopProof marks the tags as not derived; it never holds a ticket
+back for them.
 
 ## Forwarding
 

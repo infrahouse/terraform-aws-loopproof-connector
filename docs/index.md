@@ -5,6 +5,8 @@ your Security Hub findings into Linear tickets, and nothing more:
 
 * **A cross-account IAM role**, `loopproof-<environment>-connector`. LoopProof's control plane assumes it, with an
   ExternalId, to read findings and set their status and comment.
+* **Resource tags.** The role reads your ECR repositories' tags, for the findings whose resource carries none, and,
+  if you turn it on, queries AWS Control Tower's Config aggregator for the tags of your other accounts' resources.
 * **Forwarding.** An EventBridge rule sends Security Hub's "Findings Imported V2" events of the severities you
   choose to LoopProof's event bus, through a role that may only put events on that bus.
 * **Excluded accounts.** The findings of the accounts you exclude never leave your account, and an SSM parameter
@@ -18,7 +20,10 @@ your Security Hub findings into Linear tickets, and nothing more:
 ## Features
 
 * Trust limited to the control plane's `loopproof-<environment>-*` roles and to one or two ExternalIds
-* `securityhub:GetFindings` and `securityhub:BatchUpdateFindings` only; updates are confined to status and comment
+* In Security Hub, `securityhub:GetFindings` and `securityhub:BatchUpdateFindings` only; updates are confined to
+  status and comment
+* Tags: `ecr:ListTagsForResource` on your account's repositories, and Control Tower's aggregator only if you turn it
+  on, held to that aggregator
 * Forwarding of new, updated and closed findings by OCSF severity, across accounts and Regions
 * Account exclusion at the edge, with the list published for LoopProof in SSM
 * ExternalId rotation without a failed `AssumeRole`, and without a change to your Terraform

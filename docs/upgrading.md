@@ -1,5 +1,25 @@
 # Upgrading
 
+## From 1.0.1
+
+This release lets the connector role read resource tags, for the findings whose resource carries none: the tags of
+the account's ECR repositories always, and, with the new input `enable_control_tower_aggregator_query`, AWS Control
+Tower's Config aggregator. See [Resource tags](architecture.md#resource-tags). The new input is optional, and off by
+default; no input or output changes.
+
+### Steps
+
+1. **Change the module's version** and run `terraform init`.
+2. **With AWS Control Tower,** where you install the connector in the Audit account, also set
+   `enable_control_tower_aggregator_query = true`. Whoever applies the module then needs `cloudcontrol:GetResource`,
+   `config:DescribeConfigurationAggregators` and `config:ListTagsForResource`; see
+   [Configuration](configuration.md#enable_control_tower_aggregator_query).
+3. **`terraform apply`.** The plan adds the connector role's policy `ecr-repository-tags`, and
+   `control-tower-aggregator-query` if you set the input, and changes the role's `module_version` tag in place.
+
+Nothing else changes: the role, its trust and its other policies, the forwarding rule and both parameters stay as they
+are, and none is replaced. The registration doesn't run again, and the registration token isn't needed.
+
 ## From 0.3.0
 
 This release reads the ExternalIds and the registration token from two SSM parameters in your account, and registers

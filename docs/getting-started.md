@@ -26,6 +26,10 @@ Install the module in the account where Security Hub collects your findings, in 
 In that account and Region, Security Hub's EventBridge feed carries the findings of every member account and of every
 linked Region, and `GetFindingsV2` can read them all.
 
+With AWS Control Tower, also set `enable_control_tower_aggregator_query = true`, so that LoopProof reads the tags of
+your other accounts' resources from Control Tower's Config aggregator in Audit; see
+[Configuration](configuration.md#enable_control_tower_aggregator_query).
+
 ## First deployment
 
 1. **Add both parts to one root.** Part 1 creates the two SSM SecureString parameters with the write-only placeholder
