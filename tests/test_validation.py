@@ -8,8 +8,10 @@ import json
 from typing import Any, Dict, Iterator, Optional
 
 import pytest
+from botocore.exceptions import ClientError
 
 from tests.conftest import (
+    CONTROL_TOWER_AGGREGATOR,
     PLACEHOLDER,
     VALIDATION_ROOT,
     new_external_id,
@@ -236,6 +238,7 @@ def tfvars(
         "registration_url": "https://api.staging.loopproof.ai/connector/registrations",
         "severities": None,
         "excluded_accounts": None,
+        "enable_control_tower_aggregator_query": None,
     }
     values.update(overrides)
     return values
@@ -283,6 +286,8 @@ def validation_root(aws_provider_version):
         ({"environment": "production-eu-1"}, [EXTERNAL_ID]),
         ({"excluded_accounts": []}, [EXTERNAL_ID]),
         ({"excluded_accounts": ["987654321012", "210987654321"]}, [EXTERNAL_ID]),
+        # Off, the module doesn't look for the aggregator, which the test account doesn't have.
+        ({"enable_control_tower_aggregator_query": False}, [EXTERNAL_ID]),
     ],
     ids=[
         "defaults",
@@ -293,6 +298,7 @@ def validation_root(aws_provider_version):
         "environment-hyphens",
         "excluded-accounts-empty",
         "excluded-accounts-two",
+        "aggregator-query-off",
     ],
 )
 def test_valid_inputs(
@@ -330,6 +336,42 @@ def test_invalid_inputs(
     assert message in printed(result)
     if secret is not None:
         assert secret not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "aws_provider_version", ["~> 6.0"], ids=["aws-6"], scope="module"
+)
+def test_aggregator_query_without_aggregator(
+    validation_root, parameters, boto3_session, aws_region, test_role_arn
+):
+    """
+    With the aggregator query on, the plan fails where Control Tower's aggregator isn't, and the error
+    names it. Off, the same account plans cleanly (``aggregator-query-off`` above).
+    """
+    config = boto3_session.client("config", region_name=aws_region)
+    with pytest.raises(ClientError) as err:
+        config.describe_configuration_aggregators(
+            ConfigurationAggregatorNames=[CONTROL_TOWER_AGGREGATOR]
+        )
+    assert (
+        err.value.response["Error"]["Code"] == "NoSuchConfigurationAggregatorException"
+    ), "a stand-in aggregator is left from test_config_aggregator.py; delete it"
+
+    store_external_ids(parameters, json.dumps([EXTERNAL_ID]))
+    write_tfvars(
+        validation_root,
+        tfvars(
+            aws_region,
+            test_role_arn,
+            parameters,
+            enable_control_tower_aggregator_query=True,
+        ),
+    )
+    result = terraform(validation_root, "plan", "-input=false")
+
+    assert result.returncode != 0
+    assert CONTROL_TOWER_AGGREGATOR in printed(result)
+    assert "was not found" in printed(result)
 
 
 @pytest.mark.parametrize(

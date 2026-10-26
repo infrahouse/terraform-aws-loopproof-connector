@@ -1,7 +1,7 @@
 """
-A plain install, without excluded accounts: the resources, the outputs, the trust policy, the
-connector's permissions, the forwarding rule and the excluded accounts' parameter. The tests share
-one deployment.
+A plain install, without excluded accounts or the aggregator query: the resources, the outputs, the
+trust policy, the connector's permissions, among them the read of repositories' tags, the forwarding
+rule and the excluded accounts' parameter. The tests share one deployment.
 """
 
 import json
@@ -12,18 +12,22 @@ import pytest
 from botocore.exceptions import ClientError
 
 from tests.conftest import (
+    CONNECTOR_ACTIONS,
     CONNECTOR_ROOT,
     EXCLUDED_ACCOUNTS_PARAMETER,
     EXTERNAL_IDS_PARAMETER,
     MODULE_VERSION,
     OCSF_SEVERITY_IDS,
     REGISTRATION_TOKEN_PARAMETER,
+    REPOSITORY_TAG,
     TEST_ENVIRONMENT,
     ConnectorProbe,
+    allowed_actions,
     as_list,
     connector_applied,
     connector_tfvars,
     finding_event,
+    inline_policy_statements,
     new_external_id,
     new_registration_token,
     policy_statements,
@@ -40,6 +44,7 @@ pytestmark = pytest.mark.parametrize(
 
 FORWARDED = ["High", "Critical", "Fatal"]
 NOT_FORWARDED = ["Low", "Medium", "Informational"]
+OTHER_ACCOUNT_ID = "111122223333"
 
 
 @pytest.fixture(scope="module")
@@ -175,31 +180,18 @@ def test_connector_trust_policy(connector, iam_client):
 
 def test_connector_permissions(connector, iam_client):
     """
-    The connector role may only read findings and set their status and comment, and read the
-    excluded accounts.
+    The connector role may only read findings and set their status and comment, read the excluded
+    accounts and read repositories' tags. Without the input, it gets no aggregator query.
     """
     role_name = connector["outputs"]["role_name"]
+    statements = inline_policy_statements(iam_client, role_name)
 
-    assert (
-        iam_client.list_attached_role_policies(RoleName=role_name)["AttachedPolicies"]
-        == []
-    )
     assert sorted(iam_client.list_role_policies(RoleName=role_name)["PolicyNames"]) == [
+        "ecr-repository-tags",
         "excluded-accounts-parameter",
         "security-hub-findings",
     ]
-    statements = policy_statements(
-        iam_client.get_role_policy(
-            RoleName=role_name, PolicyName="security-hub-findings"
-        )["PolicyDocument"]
-    )
-    allowed = [statement for statement in statements if statement["Effect"] == "Allow"]
-    assert {
-        action for statement in allowed for action in as_list(statement["Action"])
-    } == {
-        "securityhub:GetFindings",
-        "securityhub:BatchUpdateFindings",
-    }
+    assert allowed_actions(iam_client, role_name) == CONNECTOR_ACTIONS
     # No wildcard actions, and every Deny only narrows BatchUpdateFindings.
     assert not [
         action
@@ -320,6 +312,159 @@ def test_connector_ssm_simulated(
         ResourceArns=[resource_arn],
     )["EvaluationResults"][0]
     assert result["EvalDecision"] == decision, result
+
+
+def test_connector_repository_tags_policy(connector, iam_client):
+    """
+    The connector role's third policy allows ListTagsForResource on the account's ECR repositories, in
+    every Region, and nothing else.
+    """
+    account_id = connector["outputs"]["event_bus_arn"].split(":")[4]
+    statements = policy_statements(
+        iam_client.get_role_policy(
+            RoleName=connector["outputs"]["role_name"],
+            PolicyName="ecr-repository-tags",
+        )["PolicyDocument"]
+    )
+
+    assert len(statements) == 1
+    assert statements[0]["Effect"] == "Allow"
+    assert as_list(statements[0]["Action"]) == ["ecr:ListTagsForResource"]
+    assert as_list(statements[0]["Resource"]) == [
+        f"arn:aws:ecr:*:{account_id}:repository/*"
+    ]
+    assert "Condition" not in statements[0]
+
+
+@pytest.mark.parametrize(
+    "action, resource, decision",
+    [
+        # Any repository of the account, in any Region: a finding's repository is in its own Region.
+        (
+            "ecr:ListTagsForResource",
+            "arn:aws:ecr:{region}:{account}:repository/app",
+            "allowed",
+        ),
+        (
+            "ecr:ListTagsForResource",
+            "arn:aws:ecr:{other_region}:{account}:repository/team/app",
+            "allowed",
+        ),
+        (
+            "ecr:ListTagsForResource",
+            "arn:aws:ecr:{region}:{other_account}:repository/app",
+            "implicitDeny",
+        ),
+        # Nothing else of ECR: not the images, the repositories' settings or their tags' changes.
+        (
+            "ecr:DescribeRepositories",
+            "arn:aws:ecr:{region}:{account}:repository/app",
+            "implicitDeny",
+        ),
+        (
+            "ecr:DescribeImages",
+            "arn:aws:ecr:{region}:{account}:repository/app",
+            "implicitDeny",
+        ),
+        (
+            "ecr:BatchGetImage",
+            "arn:aws:ecr:{region}:{account}:repository/app",
+            "implicitDeny",
+        ),
+        (
+            "ecr:GetRepositoryPolicy",
+            "arn:aws:ecr:{region}:{account}:repository/app",
+            "implicitDeny",
+        ),
+        (
+            "ecr:TagResource",
+            "arn:aws:ecr:{region}:{account}:repository/app",
+            "implicitDeny",
+        ),
+        (
+            "ecr:UntagResource",
+            "arn:aws:ecr:{region}:{account}:repository/app",
+            "implicitDeny",
+        ),
+        ("ecr:GetAuthorizationToken", "*", "implicitDeny"),
+        # Nor any other resource's tags.
+        ("tag:GetResources", "*", "implicitDeny"),
+        # Without the input, no aggregator query.
+        (
+            "config:SelectAggregateResourceConfig",
+            "arn:aws:config:{region}:{account}:config-aggregator/config-aggregator-abcd1234",
+            "implicitDeny",
+        ),
+        ("config:DescribeConfigurationAggregators", "*", "implicitDeny"),
+    ],
+)
+def test_connector_tags_simulated(
+    connector, iam_client, aws_region, action, resource, decision
+):
+    """The IAM policy simulator lets the connector role read the account's repositories' tags, and no more."""
+    account_id = connector["outputs"]["event_bus_arn"].split(":")[4]
+    other_region = "us-east-1" if aws_region != "us-east-1" else "us-west-1"
+    result = iam_client.simulate_principal_policy(
+        PolicySourceArn=connector["outputs"]["role_arn"],
+        ActionNames=[action],
+        ResourceArns=[
+            resource.format(
+                region=aws_region,
+                other_region=other_region,
+                account=account_id,
+                other_account=OTHER_ACCOUNT_ID,
+            )
+        ],
+    )["EvaluationResults"][0]
+    assert result["EvalDecision"] == decision, result
+
+
+def test_connector_reads_repository_tags(connector, boto3_session, aws_region):
+    """
+    As the connector role, LoopProof reads a repository's tags, and nothing else of ECR, nor the tags
+    of other resources.
+    """
+    outputs = connector["outputs"]
+    repository_arn = outputs["repository_arn"]
+    repository_name = repository_arn.split("/", 1)[1]
+    probe = ConnectorProbe(boto3_session, aws_region, outputs["role_arn"])
+    tags: List[List[Dict[str, str]]] = []
+
+    def read() -> bool:
+        try:
+            ecr = probe.session(
+                outputs["probe_role_arn"], connector["external_id"]
+            ).client("ecr")
+            tags.append(ecr.list_tags_for_resource(resourceArn=repository_arn)["tags"])
+        except ClientError as err:
+            # STS answers AccessDenied, ECR AccessDeniedException, until IAM has the change.
+            if err.response["Error"]["Code"] in (
+                "AccessDenied",
+                "AccessDeniedException",
+            ):
+                return False
+            raise
+        return True
+
+    wait_for(read, "the connector role can read the repository's tags")
+    assert REPOSITORY_TAG in tags[-1]
+
+    session = probe.session(outputs["probe_role_arn"], connector["external_id"])
+    ecr = session.client("ecr")
+    tagging = session.client("resourcegroupstaggingapi")
+    refused: List[Callable[[], Any]] = [
+        lambda: ecr.describe_repositories(repositoryNames=[repository_name]),
+        lambda: ecr.describe_images(repositoryName=repository_name),
+        lambda: ecr.get_authorization_token(),
+        lambda: ecr.tag_resource(
+            resourceArn=repository_arn, tags=[{"Key": "added", "Value": "by-loopproof"}]
+        ),
+        lambda: tagging.get_resources(),
+    ]
+    for call in refused:
+        with pytest.raises(ClientError) as err:
+            call()
+        assert err.value.response["Error"]["Code"] == "AccessDeniedException"
 
 
 def test_excluded_accounts_parameter(connector, ssm_client):

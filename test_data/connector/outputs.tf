@@ -37,3 +37,7 @@ output "probe_role_arn" {
 output "outsider_role_arn" {
   value = aws_iam_role.outsider.arn
 }
+
+output "repository_arn" {
+  value = aws_ecr_repository.tagged.arn
+}
