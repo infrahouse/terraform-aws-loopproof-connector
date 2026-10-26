@@ -11,4 +11,6 @@ module "connector" {
   registration_url                 = var.registration_url
   severities                       = var.severities
   excluded_accounts                = var.excluded_accounts
+
+  enable_control_tower_aggregator_query = var.enable_control_tower_aggregator_query
 }

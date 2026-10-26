@@ -41,6 +41,18 @@ module "connector" {
   registration_url                 = var.registration_url
   severities                       = var.severities
   excluded_accounts                = var.excluded_accounts
+
+  enable_control_tower_aggregator_query = var.enable_control_tower_aggregator_query
+}
+
+# Stands in for a repository of the tenant's, whose tags LoopProof reads with the connector role.
+resource "aws_ecr_repository" "tagged" {
+  name         = "loopproof-${var.environment}-tagged"
+  force_delete = true
+
+  tags = {
+    team = "loopproof-pytest"
+  }
 }
 
 # Probe roles stand in for the control plane's roles. "probe" matches loopproof-<environment>-*,

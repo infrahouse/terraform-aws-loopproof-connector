@@ -14,4 +14,5 @@ terraform.tfstate.backup
 /test_data/*/terraform.tf
 /test_data/*/terraform.tfvars.json
 /test_data/*/tfplan
+/test_data/*/*_override.tf
 /site/

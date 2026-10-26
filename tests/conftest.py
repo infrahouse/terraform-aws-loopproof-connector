@@ -19,7 +19,7 @@ from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from os import path as osp
 from textwrap import dedent
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 import boto3
 import pytest
@@ -34,6 +34,7 @@ MODULE_VERSION = "1.0.1"
 TERRAFORM_ROOT_DIR = "test_data"
 CONNECTOR_ROOT = osp.join(TERRAFORM_ROOT_DIR, "connector")
 VALIDATION_ROOT = osp.join(TERRAFORM_ROOT_DIR, "validation")
+UPGRADE_ROOT = osp.join(TERRAFORM_ROOT_DIR, "upgrade")
 
 TEST_ENVIRONMENT = "pytest"
 RULE_NAME = f"loopproof-{TEST_ENVIRONMENT}-findings"
@@ -80,6 +81,20 @@ NO_PASTE_AFTER_PROOF = (
 
 # A new or changed trust policy can take a minute or more to apply everywhere in IAM.
 IAM_PROPAGATION_TIMEOUT = 300
+
+# What the connector role may do without the aggregator query: read findings and set their status and
+# comment, read the excluded accounts, and read repositories' tags. Nothing more, and no write but the
+# findings' status and comment.
+CONNECTOR_ACTIONS = {
+    "securityhub:GetFindings",
+    "securityhub:BatchUpdateFindings",
+    "ssm:GetParameter",
+    "ecr:ListTagsForResource",
+}
+# AWS Control Tower's AWS Config aggregator in the Audit account, which the module looks up by name.
+CONTROL_TOWER_AGGREGATOR = "aws-controltower-GuardrailsComplianceAggregator"
+# A tag of the connector root's stand-in for a tenant's ECR repository.
+REPOSITORY_TAG = {"Key": "team", "Value": "loopproof-pytest"}
 
 # OCSF enums, from https://schema.ocsf.io/1.6.0/classes/detection_finding.
 # Kept apart from the module's own table so the tests check the module's mapping.
@@ -156,6 +171,7 @@ def connector_tfvars(
     test_role_arn: Optional[str],
     registration_url: str,
     excluded_accounts: Optional[List[str]] = None,
+    enable_control_tower_aggregator_query: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Build the variables of the ``connector`` test root module. The ExternalIds and the registration
@@ -165,6 +181,8 @@ def connector_tfvars(
     :param test_role_arn: Role that Terraform assumes, if any.
     :param registration_url: Where the module reports the role ARN.
     :param excluded_accounts: Accounts whose findings aren't forwarded; ``None`` for the module's default.
+    :param enable_control_tower_aggregator_query: Whether the connector role may query Control Tower's
+        aggregator; ``None`` for the module's default.
     :return: Variable names and values.
     """
     return {
@@ -173,6 +191,7 @@ def connector_tfvars(
         "environment": TEST_ENVIRONMENT,
         "registration_url": registration_url,
         "excluded_accounts": excluded_accounts,
+        "enable_control_tower_aggregator_query": enable_control_tower_aggregator_query,
     }
 
 
@@ -730,3 +749,39 @@ def as_list(value: Any) -> List[Any]:
     :return: The element as a list.
     """
     return value if isinstance(value, list) else [value]
+
+
+def inline_policy_statements(iam_client: Any, role_name: str) -> List[Dict[str, Any]]:
+    """
+    :param iam_client: IAM.
+    :param role_name: A role with inline policies only.
+    :return: The statements of all its inline policies.
+    :raise AssertionError: If the role has a managed policy attached.
+    """
+    assert (
+        iam_client.list_attached_role_policies(RoleName=role_name)["AttachedPolicies"]
+        == []
+    )
+    return [
+        statement
+        for name in iam_client.list_role_policies(RoleName=role_name)["PolicyNames"]
+        for statement in policy_statements(
+            iam_client.get_role_policy(RoleName=role_name, PolicyName=name)[
+                "PolicyDocument"
+            ]
+        )
+    ]
+
+
+def allowed_actions(iam_client: Any, role_name: str) -> Set[str]:
+    """
+    :param iam_client: IAM.
+    :param role_name: A role with inline policies only.
+    :return: Every action its policies allow, as written.
+    """
+    return {
+        action
+        for statement in inline_policy_statements(iam_client, role_name)
+        if statement["Effect"] == "Allow"
+        for action in as_list(statement["Action"])
+    }
