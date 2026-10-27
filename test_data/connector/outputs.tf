@@ -41,3 +41,7 @@ output "outsider_role_arn" {
 output "repository_arn" {
   value = aws_ecr_repository.tagged.arn
 }
+
+output "aggregator_arn" {
+  value = aws_config_configuration_aggregator.control_tower.arn
+}

@@ -32,8 +32,11 @@ REGISTRY_SOURCE = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
 # Terraform merges an override file's module block into the root's, so this one swaps the root's source,
 # this checkout, for the release on the registry.
 OVERRIDE_FILE = osp.join(UPGRADE_ROOT, "main_override.tf")
-# All the upgrade may create: the connector role's policy for repositories' tags.
-ADDED = {"module.connector.aws_iam_role_policy.connector_repository_tags"}
+# All the upgrade may create: the connector role's policies for resource tags.
+ADDED = {
+    "module.connector.aws_iam_role_policy.connector_repository_tags",
+    "module.connector.aws_iam_role_policy.connector_config_aggregator",
+}
 
 
 def pin_previous_release() -> None:
@@ -91,7 +94,7 @@ def test_upgrade_from_previous_release(
     registration_server,
 ):
     """
-    Changing the version adds the connector role's policy for repositories' tags and may change the role's
+    Changing the version adds the connector role's two policies for resource tags and may change the role's
     module_version tag, in place. It replaces nothing, changes no other resource and doesn't register again,
     and the next plan is empty.
     """
@@ -159,6 +162,7 @@ def test_upgrade_from_previous_release(
             assert sorted(
                 iam_client.list_role_policies(RoleName=role_name)["PolicyNames"]
             ) == [
+                "config-aggregator-query",
                 "ecr-repository-tags",
                 "excluded-accounts-parameter",
                 "security-hub-findings",
