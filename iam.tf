@@ -141,34 +141,25 @@ resource "aws_iam_role_policy" "connector_repository_tags" {
   policy = data.aws_iam_policy_document.connector_repository_tags.json
 }
 
-# The aggregator query, for a tenant with AWS Control Tower, whose Config aggregator holds the tags of the
-# organization's resources. IAM names the aggregator by its ARN, which the AWS provider has no data source
-# to look up, so Cloud Control reads it by name. The read fails where there's no such aggregator, hence the
-# input. LoopProof needs nothing to find it: SelectAggregateResourceConfig takes the aggregator's name.
+# The aggregator query, for a tenant with AWS Control Tower, whose Config aggregator in the Audit account,
+# aws-controltower-GuardrailsComplianceAggregator, holds the tags of the organization's resources. IAM
+# names an aggregator by an ARN that ends in an ID AWS Config generates, not its name, so the grant covers
+# every aggregator of the account in the module's Region (Aleks, 2026-10-27): no lookup, and for a tenant
+# without one it matches nothing. LoopProof needs nothing to find it: SelectAggregateResourceConfig takes
+# the aggregator's name.
 # https://docs.aws.amazon.com/service-authorization/latest/reference/list_awsconfig.html
-data "aws_cloudcontrolapi_resource" "control_tower_aggregator" {
-  count      = var.enable_control_tower_aggregator_query ? 1 : 0
-  type_name  = "AWS::Config::ConfigurationAggregator"
-  identifier = local.control_tower_aggregator_name
-}
-
-data "aws_iam_policy_document" "connector_control_tower_aggregator" {
-  count = var.enable_control_tower_aggregator_query ? 1 : 0
-
+data "aws_iam_policy_document" "connector_config_aggregator" {
   statement {
-    sid     = "QueryControlTowerAggregator"
-    actions = ["config:SelectAggregateResourceConfig"]
-    resources = [
-      jsondecode(data.aws_cloudcontrolapi_resource.control_tower_aggregator[0].properties).ConfigurationAggregatorArn
-    ]
+    sid       = "QueryConfigAggregators"
+    actions   = ["config:SelectAggregateResourceConfig"]
+    resources = ["arn:${local.partition}:config:${local.region}:${local.account_id}:config-aggregator/*"]
   }
 }
 
-resource "aws_iam_role_policy" "connector_control_tower_aggregator" {
-  count  = var.enable_control_tower_aggregator_query ? 1 : 0
-  name   = "control-tower-aggregator-query"
+resource "aws_iam_role_policy" "connector_config_aggregator" {
+  name   = "config-aggregator-query"
   role   = aws_iam_role.connector.id
-  policy = data.aws_iam_policy_document.connector_control_tower_aggregator[0].json
+  policy = data.aws_iam_policy_document.connector_config_aggregator.json
 }
 
 # The forwarder role: EventBridge assumes it to put the matching findings on the control-plane bus.

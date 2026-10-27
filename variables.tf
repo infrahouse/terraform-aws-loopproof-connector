@@ -173,16 +173,3 @@ variable "excluded_accounts" {
     error_message = "excluded_accounts must not list an account ID twice."
   }
 }
-
-variable "enable_control_tower_aggregator_query" {
-  type        = bool
-  description = <<-EOT
-    Let LoopProof query AWS Control Tower's AWS Config aggregator, aws-controltower-GuardrailsComplianceAggregator,
-    for the tags of the resources in your organization's other accounts. Turn it on where Control Tower keeps that
-    aggregator: the Audit account, in Control Tower's home Region, which must be the Region you apply the module in.
-    The module looks the aggregator up by name and lets the connector role query it and no other aggregator. With
-    this on, the plan fails if the aggregator isn't there.
-  EOT
-  default     = false
-  nullable    = false
-}

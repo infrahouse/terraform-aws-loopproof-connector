@@ -12,10 +12,6 @@ locals {
   rule_name                        = "loopproof-${var.environment}-findings"
   excluded_accounts_parameter_name = "/loopproof/${var.environment}/excluded-accounts"
 
-  # AWS Control Tower's AWS Config aggregator, in the Audit account and Control Tower's home Region. IAM names
-  # it by an ARN that ends in an ID AWS Config generates, so the module looks it up by this name.
-  control_tower_aggregator_name = "aws-controltower-GuardrailsComplianceAggregator"
-
   # What Part 1 of the install creates both of the tenant's parameters with, until the tenant fills them.
   placeholder = "unset"
 
