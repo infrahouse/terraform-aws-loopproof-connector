@@ -145,7 +145,10 @@ def test_upgrade_from_previous_release(
                 for address, change in changes.items()
                 if change["actions"] == ["update"]
             }
-            assert set(updated) == {ROLE_ADDRESS}, updated
+            # The message names addresses and actions only: a change's before and after hold the ExternalId.
+            assert set(updated) == {ROLE_ADDRESS}, {
+                address: change["actions"] for address, change in updated.items()
+            }
             change = updated[ROLE_ADDRESS]
             # An attribute unknown until the apply is missing from "after", so it counts as changed.
             changed = changed_keys(change["before"], change["after"])
