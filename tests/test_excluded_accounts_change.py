@@ -41,10 +41,13 @@ def assert_excluded(events_client: Any, ssm_client: Any, excluded: List[str]) ->
     """
     pattern = json.loads(events_client.describe_rule(Name=RULE_NAME)["EventPattern"])
     assert pattern == forwarding_pattern_document(excluded)
+    # GuardDuty's findings, the sample's: the rule forwards them at any severity, Low too, unless
+    # their account is excluded.
     for account_id in [ACCOUNT, OTHER_ACCOUNT]:
-        assert forwarded(
-            events_client, finding_event("High", account_id=account_id)
-        ) is (account_id not in excluded), account_id
+        for severity in ["Low", "High"]:
+            assert forwarded(
+                events_client, finding_event(severity, account_id=account_id)
+            ) is (account_id not in excluded), (account_id, severity)
     value = ssm_client.get_parameter(Name=EXCLUDED_ACCOUNTS_PARAMETER)["Parameter"][
         "Value"
     ]

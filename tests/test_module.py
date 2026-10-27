@@ -16,10 +16,12 @@ from tests.conftest import (
     CONNECTOR_ROOT,
     EXCLUDED_ACCOUNTS_PARAMETER,
     EXTERNAL_IDS_PARAMETER,
+    GUARDDUTY,
     MODULE_VERSION,
     OCSF_SEVERITY_IDS,
     REGISTRATION_TOKEN_PARAMETER,
     REPOSITORY_TAG,
+    SEVERITY_FILTERED_PRODUCTS,
     TEST_ENVIRONMENT,
     ConnectorProbe,
     allowed_actions,
@@ -43,7 +45,7 @@ pytestmark = pytest.mark.parametrize(
 )
 
 FORWARDED = ["High", "Critical", "Fatal"]
-NOT_FORWARDED = ["Low", "Medium", "Informational"]
+NOT_FORWARDED = ["Unknown", "Informational", "Low", "Medium", "Other"]
 OTHER_ACCOUNT_ID = "111122223333"
 
 
@@ -661,15 +663,33 @@ def test_connector_reads_excluded_accounts(connector, boto3_session, aws_region)
 
 
 @pytest.mark.parametrize("severity", FORWARDED + NOT_FORWARDED)
-def test_forwarding_pattern(connector, events_client, severity):
-    """By default, High, Critical and Fatal findings are forwarded; Low, Medium and Informational aren't."""
+@pytest.mark.parametrize("product", SEVERITY_FILTERED_PRODUCTS)
+def test_forwarding_pattern(connector, events_client, product, severity):
+    """
+    By default, Inspector's, CSPM's and exposure findings are forwarded at High, Critical and Fatal,
+    and not at Unknown, Informational, Low, Medium or Other.
+    """
     pattern = events_client.describe_rule(
         Name=f"loopproof-{TEST_ENVIRONMENT}-findings"
     )["EventPattern"]
     matched = events_client.test_event_pattern(
-        EventPattern=pattern, Event=json.dumps(finding_event(severity))
+        EventPattern=pattern,
+        Event=json.dumps(finding_event(severity, product=product)),
     )
     assert matched["Result"] is (severity in FORWARDED)
+
+
+@pytest.mark.parametrize("severity", FORWARDED + NOT_FORWARDED)
+def test_forwarding_pattern_guardduty(connector, events_client, severity):
+    """GuardDuty's findings are forwarded at every severity, whatever severities lists."""
+    pattern = events_client.describe_rule(
+        Name=f"loopproof-{TEST_ENVIRONMENT}-findings"
+    )["EventPattern"]
+    matched = events_client.test_event_pattern(
+        EventPattern=pattern,
+        Event=json.dumps(finding_event(severity, product=GUARDDUTY)),
+    )
+    assert matched["Result"] is True
 
 
 @pytest.mark.parametrize("activity", ["Create", "Update", "Close"])
@@ -699,8 +719,8 @@ def test_forwarding_pattern_ignores_cspm_events(connector, events_client):
 
 def test_forwarding_pattern_document(connector, events_client):
     """
-    The rule matches the Findings Imported V2 events by OCSF severity_id. With no account excluded,
-    the pattern has no account filter: it's the pattern of 0.2.0, so upgrading changes no rule.
+    The rule matches the Findings Imported V2 events by OCSF severity_id, or by GuardDuty's product
+    name. With no account excluded, the pattern has no account filter.
     """
     pattern = json.loads(
         events_client.describe_rule(Name=f"loopproof-{TEST_ENVIRONMENT}-findings")[
@@ -712,10 +732,26 @@ def test_forwarding_pattern_document(connector, events_client):
         "detail-type": ["Findings Imported V2"],
         "detail": {
             "findings": {
-                "severity_id": [OCSF_SEVERITY_IDS[severity] for severity in FORWARDED]
+                "$or": [
+                    {
+                        "severity_id": [
+                            OCSF_SEVERITY_IDS[severity] for severity in FORWARDED
+                        ]
+                    },
+                    {"metadata": {"product": {"name": ["GuardDuty"]}}},
+                ]
             }
         },
     }
+
+
+def test_forwarding_rule_description(connector, events_client):
+    """The rule's description says what it forwards, and to which environment."""
+    rule = events_client.describe_rule(Name=f"loopproof-{TEST_ENVIRONMENT}-findings")
+    assert rule["Description"] == (
+        "Forwards Security Hub's GuardDuty findings of every severity, and its other findings of the"
+        f" selected severities, to LoopProof {TEST_ENVIRONMENT}."
+    )
 
 
 def test_forwarding_target(connector, events_client, iam_client):

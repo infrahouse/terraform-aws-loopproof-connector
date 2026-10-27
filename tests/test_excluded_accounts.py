@@ -12,8 +12,12 @@ import pytest
 
 from tests.conftest import (
     CONNECTOR_ROOT,
+    DEFAULT_SEVERITIES,
     EXCLUDED_ACCOUNTS_PARAMETER,
+    GUARDDUTY,
+    OCSF_SEVERITY_IDS,
     RULE_NAME,
+    SEVERITY_FILTERED_PRODUCTS,
     connector_applied,
     connector_tfvars,
     finding_event,
@@ -65,10 +69,16 @@ def test_pattern_document(connector, events_client):
 
 
 @pytest.mark.parametrize("account_id", EXCLUDED)
-@pytest.mark.parametrize("severity", ["High", "Critical", "Fatal"])
-def test_excluded_account_dropped(connector, events_client, account_id, severity):
-    """A finding of an excluded account isn't forwarded, whatever its severity."""
-    assert not forwarded(events_client, finding_event(severity, account_id=account_id))
+@pytest.mark.parametrize("severity", list(OCSF_SEVERITY_IDS))
+@pytest.mark.parametrize("product", [GUARDDUTY] + SEVERITY_FILTERED_PRODUCTS)
+def test_excluded_account_dropped(
+    connector, events_client, account_id, severity, product
+):
+    """A finding of an excluded account isn't forwarded, whatever its product and severity: GuardDuty's neither."""
+    assert not forwarded(
+        events_client,
+        finding_event(severity, account_id=account_id, product=product),
+    )
 
 
 @pytest.mark.parametrize("activity", ["Create", "Update", "Close"])
@@ -77,17 +87,32 @@ def test_other_account_forwarded(connector, events_client, activity):
     assert forwarded(events_client, finding_event("High", activity, INCLUDED))
 
 
-def test_other_account_low_severity_dropped(connector, events_client):
-    """The severity filter still applies to the accounts that aren't excluded."""
-    assert not forwarded(events_client, finding_event("Low", account_id=INCLUDED))
+@pytest.mark.parametrize("severity", list(OCSF_SEVERITY_IDS))
+def test_other_account_guardduty_forwarded(connector, events_client, severity):
+    """Another account's GuardDuty findings are forwarded at every severity."""
+    assert forwarded(
+        events_client,
+        finding_event(severity, account_id=INCLUDED, product=GUARDDUTY),
+    )
 
 
-def test_finding_without_account_dropped(connector, events_client):
+@pytest.mark.parametrize("severity", list(OCSF_SEVERITY_IDS))
+@pytest.mark.parametrize("product", SEVERITY_FILTERED_PRODUCTS)
+def test_other_account_by_severity(connector, events_client, product, severity):
+    """The severity filter still applies to the other products' findings of the accounts that aren't excluded."""
+    assert forwarded(
+        events_client, finding_event(severity, account_id=INCLUDED, product=product)
+    ) is (severity in DEFAULT_SEVERITIES)
+
+
+@pytest.mark.parametrize("severity", ["Low", "High"])
+def test_finding_without_account_dropped(connector, events_client, severity):
     """
     While accounts are excluded, a finding without cloud.account.uid doesn't match anything-but,
-    so it isn't forwarded. Security Hub's findings carry it; the case only pins the behavior.
+    so it isn't forwarded, GuardDuty's at any severity neither. Security Hub's findings carry it;
+    the case only pins the behavior.
     """
-    event = finding_event("High")
+    event = finding_event(severity, product=GUARDDUTY)
     del event["detail"]["findings"][0]["cloud"]["account"]
     assert not forwarded(events_client, event)
 
