@@ -501,7 +501,8 @@ class ConnectorProbe:
 
     def _principal(self, role_arn: str) -> boto3.Session:
         """
-        Return a session as a stand-in control-plane role, waiting until IAM lets the test role assume it.
+        Return a session as a stand-in control-plane role, waiting until IAM lets the test role assume it
+        and STS accepts the session's credentials.
 
         :param role_arn: The stand-in role.
         :return: Session as that role.
@@ -511,11 +512,18 @@ class ConnectorProbe:
 
             def assumed() -> bool:
                 try:
-                    sessions.append(
-                        assumed_session(self._boto3_session, role_arn, self._region)
+                    session = assumed_session(
+                        self._boto3_session, role_arn, self._region
                     )
+                    # For a few seconds after a role is created, STS may refuse the credentials it just
+                    # issued for it with InvalidClientTokenId, so a test's first call with them would fail.
+                    session.client("sts").get_caller_identity()
+                    sessions.append(session)
                 except ClientError as err:
-                    if err.response["Error"]["Code"] == "AccessDenied":
+                    if err.response["Error"]["Code"] in (
+                        "AccessDenied",
+                        "InvalidClientTokenId",
+                    ):
                         return False
                     raise
                 return True
