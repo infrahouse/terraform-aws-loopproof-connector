@@ -41,6 +41,6 @@ resource "terraform_data" "registration" {
     aws_iam_role_policy.connector,
     aws_iam_role_policy.connector_excluded_accounts,
     aws_iam_role_policy.connector_repository_tags,
-    aws_iam_role_policy.connector_control_tower_aggregator,
+    aws_iam_role_policy.connector_config_aggregator,
   ]
 }
