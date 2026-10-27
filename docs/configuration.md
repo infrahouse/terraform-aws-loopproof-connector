@@ -79,26 +79,6 @@ excluded_accounts = ["111122223333", "444455556666"]
   matter: the module sorts the list.
 * EventBridge limits a rule's pattern to 4096 characters, which holds about 250 accounts.
 
-### `enable_control_tower_aggregator_query`
-
-Default `false`. Turn it on in an organization with AWS Control Tower, where you install the connector in the Audit
-account, so that LoopProof reads the tags of your other accounts' resources from Control Tower's AWS Config
-aggregator, `aws-controltower-GuardrailsComplianceAggregator`:
-
-```hcl
-enable_control_tower_aggregator_query = true
-```
-
-* The module looks the aggregator up by name, through Cloud Control, in its own account and Region, on every plan,
-  and adds the connector role's policy `control-tower-aggregator-query`: `config:SelectAggregateResourceConfig` on
-  that aggregator's ARN, and on no other aggregator. See [Architecture](architecture.md#resource-tags).
-* The plan fails if the aggregator isn't there, with "couldn't find resource". Control Tower keeps it in its home
-  Region: if that isn't the Region you apply the module in, leave this off.
-* Whoever applies the module then needs `cloudcontrol:GetResource`, `config:DescribeConfigurationAggregators` and
-  `config:ListTagsForResource` too.
-* Off, the module doesn't look for an aggregator, and the role can query none. It always reads the tags of the
-  account's own ECR repositories, whatever this says.
-
 ## Outputs
 
 | Output | Description |

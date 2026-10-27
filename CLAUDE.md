@@ -21,14 +21,13 @@ It creates:
   limited by Deny statements on `securityhub:OCSFSyntaxPath/*` to status and comment; and two reads of resource tags,
   for the tags LoopProof derives from a related resource, such as an ECR image's repository (IH-120):
   - `ecr:ListTagsForResource` on `arn:<partition>:ecr:*:<account>:repository/*`, every repository of the account in
-    every Region (`ecr-repository-tags`), always. `tag:GetResources` would serve too, but takes no resource ARN and
-    reads every tagged resource's tags;
-  - with `enable_control_tower_aggregator_query` (default `false`), `config:SelectAggregateResourceConfig` on AWS
-    Control Tower's Config aggregator, `aws-controltower-GuardrailsComplianceAggregator`, in the module's account and
-    Region, and no other (`control-tower-aggregator-query`). IAM names an aggregator by an ARN that ends in a
-    generated ID, and the AWS provider has no data source for one, so `data "aws_cloudcontrolapi_resource"` reads it
-    by name; the read fails the plan where there is none, which is why the input exists. LoopProof needs no grant to
-    find it: `SelectAggregateResourceConfig` takes the aggregator's name;
+    every Region (`ecr-repository-tags`). `tag:GetResources` would serve too, but takes no resource ARN and reads
+    every tagged resource's tags;
+  - `config:SelectAggregateResourceConfig` on `arn:<partition>:config:<module's Region>:<account>:config-aggregator/*`
+    (`config-aggregator-query`), for AWS Control Tower's Config aggregator in Audit,
+    `aws-controltower-GuardrailsComplianceAggregator`, which LoopProof queries by its name. IAM names an aggregator
+    by an ARN that ends in a generated ID, so the grant covers every aggregator there, and matches nothing where there
+    is none: no input and no lookup (Aleks, 2026-10-27, over an opt-in exact-ARN lookup through Cloud Control);
 - `loopproof-<environment>-findings`: an EventBridge rule for "Findings Imported V2" events by OCSF `severity_id`,
   and, when `excluded_accounts` isn't empty, `anything-but` those accounts on the finding's `cloud.account.uid`,
   targeting `event_bus_arn` through `loopproof-<environment>-forwarder`, which may only `events:PutEvents` there;
@@ -59,8 +58,7 @@ both reads wait for the parameters, and the run stops at the placeholder: apply,
 
 LoopProof's onboarding generates the module call, so the variable names (`environment`,
 `control_plane_account_id`, `external_ids_parameter_arn`, `registration_token_parameter_arn`, `event_bus_arn`,
-`registration_url`, `severities`, `excluded_accounts`, `enable_control_tower_aggregator_query`) and outputs
-(`role_arn`, `region`, `role_name`,
+`registration_url`, `severities`, `excluded_accounts`) and outputs (`role_arn`, `region`, `role_name`,
 `event_rule_arn`, `excluded_accounts_parameter`) are a contract. Don't rename them without a major version. So are:
 
 - the registration request body's fields, `role_arn` and `region`, which LoopProof's `POST /connector/registrations`
@@ -114,9 +112,9 @@ Example: `make test-clean TEST_PATH=tests/test_rotation.py`.
 Integration tests with `pytest-infrahouse`, in the InfraHouse test account (`TEST_ROLE`, default region
 `us-west-2`). The test account plays the control plane: `test_data/connector` creates a bus in `us-west-1` and the
 probe roles `loopproof-pytest-probe` (matches the trust) and `outsider-pytest-probe` (doesn't). It plays the tenant's
-resources too: `test_data/connector` creates the ECR repository `loopproof-pytest-tagged`, with a tag, and
-`test_config_aggregator.py` creates a stand-in for Control Tower's aggregator, by its name, with boto3 before the
-install, as Control Tower creates it before a tenant's.
+resources too: `test_data/connector` creates the ECR repository `loopproof-pytest-tagged`, with a tag, and a
+stand-in for Control Tower's Config aggregator, by its name, over the test account and Region, which
+`test_module.py` queries as the connector role.
 
 | File | Covers |
 |------|--------|
@@ -124,13 +122,12 @@ install, as Control Tower creates it before a tenant's.
 | `tests/test_registration_refused.py` | A 401 on the first registration, its message, the tainted retry |
 | `tests/test_registration.py` | No later call; `-replace`; a replaced role; retries; 4xx; no `curl` |
 | `tests/test_register_script.py` | `files/register.sh` with a stand-in `curl`: token on stdin only (no AWS) |
-| `tests/test_module.py` | Install, outputs, ExternalId exposure, trust, permissions, tag read, forwarding, `[]` |
-| `tests/test_config_aggregator.py` | The aggregator query on: the looked-up ARN, the simulator, a query as the role |
+| `tests/test_module.py` | Install, outputs, ExternalId exposure, trust, permissions, tag reads, forwarding, `[]` |
 | `tests/test_excluded_accounts.py` | Two accounts excluded: pattern, matching, parameter, plan, reordering |
 | `tests/test_excluded_accounts_change.py` | `[]` → `[account]` → `[]`, each in place, then an empty plan |
 | `tests/test_rotation.py` | The parameter `[old]` → `[old, new]` → `[new]` without a failed AssumeRole |
-| `tests/test_upgrade.py` | 1.0.1 from the registry, then this checkout: only the new policy is added |
-| `tests/test_validation.py` | Inputs, the ExternalIds parameter's contents, the aggregator query without one, at plan |
+| `tests/test_upgrade.py` | 1.0.1 from the registry, then this checkout: only the new policies are added |
+| `tests/test_validation.py` | Inputs and the ExternalIds parameter's contents, at plan |
 
 The connector tests install the tidy way, `connector_applied` in `conftest.py`: apply Part 1's parameters with
 `-target`, fill them, apply everything, with a stand-in for LoopProof's registration API on 127.0.0.1
