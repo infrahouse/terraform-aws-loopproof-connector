@@ -56,6 +56,10 @@ Default `["High", "Critical", "Fatal"]`. The severities to forward, as Security 
 field: `Unknown`, `Informational`, `Low`, `Medium`, `High`, `Critical`, `Fatal`, `Other`. Values are case-sensitive;
 the ASFF labels of Security Hub CSPM, such as `HIGH`, are rejected.
 
+GuardDuty's findings are forwarded at every severity, whatever this lists; `severities` decides which of the other
+products' findings are forwarded, such as Inspector's, CSPM's and exposure findings. See
+[Forwarding](architecture.md#forwarding).
+
 ```hcl
 severities = ["Medium", "High", "Critical", "Fatal"]
 ```

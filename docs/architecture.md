@@ -109,18 +109,36 @@ back for them.
 
 ## Forwarding
 
-The rule `loopproof-<environment>-findings`, on the default bus, matches:
+The rule `loopproof-<environment>-findings`, on the default bus, forwards a finding if its severity is one of
+`severities`, or if it is GuardDuty's, at any severity. With the default `severities`, it matches:
 
 ```json
 {
   "source": ["aws.securityhub"],
   "detail-type": ["Findings Imported V2"],
-  "detail": {"findings": {"severity_id": [4, 5, 6]}}
+  "detail": {
+    "findings": {
+      "$or": [
+        {"severity_id": [4, 5, 6]},
+        {"metadata": {"product": {"name": ["GuardDuty"]}}}
+      ]
+    }
+  }
 }
 ```
 
 Security Hub sends one finding per event, at `detail.findings[0]`, in OCSF
 ([event format](https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-v2-cwe-event-formats.html)).
+`$or` matches if either of its patterns does
+([EventBridge](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-create-pattern-operators.html)).
+
+GuardDuty's findings are forwarded at every severity, whatever `severities` lists, by the finding's
+`metadata.product.name`, as Security Hub writes it. GuardDuty sends few findings next to Inspector and CSPM, and a
+threat below High is still a threat: every part of an attack sequence reaches LoopProof, and a finding whose severity
+drops arrives as an event. Inspector's, CSPM's and exposure findings are forwarded only at a severity `severities`
+lists. LoopProof decides what it acts on, so GuardDuty's every severity isn't an input. Through 1.1.0, the rule
+forwarded GuardDuty's findings by `severities` too.
+
 The rule matches the OCSF `severity_id`, which OCSF requires, rather than the `severity` caption, which for
 `Other` (99) the source defines ([OCSF](https://schema.ocsf.io/1.6.0/classes/detection_finding)). The `severities`
 input takes the captions and the module maps them:
@@ -136,7 +154,9 @@ input takes the captions and the module maps them:
 | Fatal | 6 |
 | Other | 99 |
 
-When `excluded_accounts` lists accounts, the pattern also refuses their findings, by the finding's account:
+When `excluded_accounts` lists accounts, the pattern also refuses their findings, by the finding's account. The
+account filter sits beside the `$or`, so it applies to both: an excluded account's GuardDuty findings stay in your
+account too.
 
 ```json
 {
@@ -144,7 +164,10 @@ When `excluded_accounts` lists accounts, the pattern also refuses their findings
   "detail-type": ["Findings Imported V2"],
   "detail": {
     "findings": {
-      "severity_id": [4, 5, 6],
+      "$or": [
+        {"severity_id": [4, 5, 6]},
+        {"metadata": {"product": {"name": ["GuardDuty"]}}}
+      ],
       "cloud": {"account": {"uid": [{"anything-but": ["111122223333"]}]}}
     }
   }
@@ -153,9 +176,9 @@ When `excluded_accounts` lists accounts, the pattern also refuses their findings
 
 With an empty list, the pattern has no account filter, as before the input existed: `anything-but` with no values
 isn't a valid pattern. A finding without `cloud.account.uid` doesn't match `anything-but`, so while accounts are
-excluded it isn't forwarded; Security Hub's findings carry it. The filter relies on one finding per event: EventBridge
-matches an array when any of its elements matches, so an event that held findings of an excluded account and of
-another would be forwarded whole.
+excluded it isn't forwarded, GuardDuty's neither; Security Hub's findings carry it. The filter relies on one finding
+per event: EventBridge matches an array when any of its elements matches, so an event that held findings of an
+excluded account and of another would be forwarded whole.
 
 The rule doesn't filter on the activity: new (`Create`), updated and closed findings all pass, and the control plane
 drops the echoes of its own updates. Security Hub CSPM events share the `aws.securityhub` source but use another

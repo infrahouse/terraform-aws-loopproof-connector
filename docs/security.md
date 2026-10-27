@@ -37,6 +37,8 @@ so the grant covers every aggregator of the account in the module's Region (`con
 yourself too. Where the account has none, it reaches nothing.
 
 The forwarder role may only `events:PutEvents` on LoopProof's bus, and only EventBridge, for this rule, may assume it.
+What the rule forwards leaves your account: GuardDuty's findings at every severity, and the other products' findings
+at the severities in `severities`, but never an excluded account's (see [Forwarding](architecture.md#forwarding)).
 
 ## Permissions for whoever applies it
 

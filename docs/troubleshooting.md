@@ -128,4 +128,5 @@ The tags of the module's own account's ECR repositories don't depend on any of t
   accounts and linked Regions reach EventBridge only there.
 * Only Security Hub CSPM is enabled. CSPM emits "Security Hub Findings - Imported" events, which the rule doesn't
   match; LoopProof needs Security Hub.
-* `severities` excludes the findings you expect. The default forwards High, Critical and Fatal only.
+* `severities` excludes the findings you expect. The default forwards High, Critical and Fatal only, but for
+  GuardDuty's findings, which are forwarded at every severity.
