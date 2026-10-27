@@ -1,5 +1,23 @@
 # Upgrading
 
+## From 1.1.0
+
+This release forwards GuardDuty's findings at every severity, whatever `severities` lists. The other products'
+findings, such as Inspector's, CSPM's and exposure findings, are forwarded by `severities`, as before, and the
+findings of the accounts in `excluded_accounts` stay in your account, GuardDuty's included. See
+[Forwarding](architecture.md#forwarding). No input or output changes, and LoopProof's generated module call needs no
+change but its version.
+
+### Steps
+
+1. **Change the module's version** and run `terraform init`.
+2. **`terraform apply`.** The plan changes the forwarding rule's pattern and description, and the connector role's
+   `module_version` tag, in place.
+
+Nothing else changes: the role's trust and policies, the rule's target, the forwarder role and both parameters stay as
+they are, and none is replaced. The registration doesn't run again, and the registration token isn't needed. From the
+apply on, LoopProof receives GuardDuty's findings below High as Security Hub imports or updates them.
+
 ## From 1.0.1
 
 This release lets the connector role read resource tags, for the findings whose resource carries none: the tags of

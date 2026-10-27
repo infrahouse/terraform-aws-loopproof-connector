@@ -8,8 +8,9 @@ your Security Hub findings into Linear tickets, and nothing more:
 * **Resource tags.** For the findings whose resource carries none, the role reads your ECR repositories' tags, and
   queries your Config aggregators, such as AWS Control Tower's, for the tags of your other accounts' resources. A
   query can return any configuration an aggregator holds, not only tags.
-* **Forwarding.** An EventBridge rule sends Security Hub's "Findings Imported V2" events of the severities you
-  choose to LoopProof's event bus, through a role that may only put events on that bus.
+* **Forwarding.** An EventBridge rule sends Security Hub's "Findings Imported V2" events to LoopProof's event bus,
+  GuardDuty's findings at every severity and the others of the severities you choose, through a role that may only
+  put events on that bus.
 * **Excluded accounts.** The findings of the accounts you exclude never leave your account, and an SSM parameter
   tells LoopProof which they are.
 * **Self-registration.** On the apply that creates the role, the module reports the role's ARN and the Region to
@@ -25,7 +26,8 @@ your Security Hub findings into Linear tickets, and nothing more:
   status and comment
 * Tags: `ecr:ListTagsForResource` on your account's repositories, and `config:SelectAggregateResourceConfig` on your
   account's aggregators in the module's Region, which returns more than tags
-* Forwarding of new, updated and closed findings by OCSF severity, across accounts and Regions
+* Forwarding of new, updated and closed findings, GuardDuty's at every severity and the others' by OCSF severity,
+  across accounts and Regions
 * Account exclusion at the edge, with the list published for LoopProof in SSM
 * ExternalId rotation without a failed `AssumeRole`, and without a change to your Terraform
 * One registration call, at apply, with `curl`; no call on a plan

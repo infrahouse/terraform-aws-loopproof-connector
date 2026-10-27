@@ -72,6 +72,9 @@ module "loopproof_connector" {
 }
 ```
 
+This adds Inspector's, CSPM's and exposure findings of Medium severity. GuardDuty's are forwarded at every severity
+already, whatever `severities` lists.
+
 ## Exclude accounts
 
 Keep the findings of an account outside your audit scope, or of a decommissioned one, in your account:

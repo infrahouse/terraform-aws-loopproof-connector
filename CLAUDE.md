@@ -29,9 +29,11 @@ It creates:
     `aws-controltower-GuardrailsComplianceAggregator`, which LoopProof queries by its name. IAM names an aggregator
     by an ARN that ends in a generated ID, so the grant covers every aggregator there, and matches nothing where there
     is none: no input and no lookup (Aleks, 2026-10-27, over an opt-in exact-ARN lookup through Cloud Control);
-- `loopproof-<environment>-findings`: an EventBridge rule for "Findings Imported V2" events by OCSF `severity_id`,
-  and, when `excluded_accounts` isn't empty, `anything-but` those accounts on the finding's `cloud.account.uid`,
-  targeting `event_bus_arn` through `loopproof-<environment>-forwarder`, which may only `events:PutEvents` there;
+- `loopproof-<environment>-findings`: an EventBridge rule for "Findings Imported V2" events whose finding has an
+  OCSF `severity_id` among `severities`, or (`$or`) is GuardDuty's (`metadata.product.name`), at any severity
+  (`local.every_severity_products`; IH-65, Aleks, 2026-10-27), and, when `excluded_accounts` isn't empty, beside the
+  `$or`, `anything-but` those accounts on the finding's `cloud.account.uid`, which applies to both, targeting
+  `event_bus_arn` through `loopproof-<environment>-forwarder`, which may only `events:PutEvents` there;
 - `/loopproof/<environment>/excluded-accounts`: a standard `String` SSM parameter, always created, holding
   `excluded_accounts` sorted as JSON (`[]` when empty), which the connector role may `ssm:GetParameter` (its policy
   `excluded-accounts-parameter`) and nothing else in SSM. LoopProof reads it at onboarding and daily; a
@@ -73,9 +75,14 @@ LoopProof's onboarding generates the module call, so the variable names (`enviro
 
 0.3.0's `external_ids` and `registration_token` inputs and `registered` output went in IH-114's major release.
 
-With `excluded_accounts` empty, the rule's pattern is exactly 0.2.0's, so upgrading changes no tenant's rule: keep it
-so. `anything-but` with no values isn't a valid pattern anyway. The account filter, like the control plane's echo
-filter, relies on one finding per event: EventBridge matches an array when any element matches.
+What the rule forwards is part of the contract too: every GuardDuty finding, whatever its severity, and every other
+finding at a severity in `severities` (IH-65, Aleks, 2026-10-27). LoopProof decides what it acts on, so GuardDuty's
+every severity is fixed, not an input. Through 1.1.0 the rule forwarded by `severities` alone, and with
+`excluded_accounts` empty its pattern was 0.2.0's; 1.2.0 changes every tenant's rule, in place, on purpose. Keep the
+pattern one rule and one target, and change what it forwards only with a decision like IH-65's: every tenant's upgrade
+carries it. With `excluded_accounts` empty the pattern has no account filter: `anything-but` with no values isn't a
+valid pattern. The account filter, like the control plane's echo filter, relies on one finding per event: EventBridge
+matches an array when any element matches.
 
 ### Credentials
 
@@ -128,9 +135,15 @@ Tower's, the tests would take it over and then delete it.
 | `tests/test_module.py` | Install, outputs, ExternalId exposure, trust, permissions, tag reads, forwarding, `[]` |
 | `tests/test_excluded_accounts.py` | Two accounts excluded: pattern, matching, parameter, plan, reordering |
 | `tests/test_excluded_accounts_change.py` | `[]` → `[account]` → `[]`, each in place, then an empty plan |
+| `tests/test_forwarding_pattern.py` | The rule alone, planned: default and widened `severities`, with and without exclusions |
 | `tests/test_rotation.py` | The parameter `[old]` → `[old, new]` → `[new]` without a failed AssumeRole |
-| `tests/test_upgrade.py` | 1.0.1 from the registry, then this checkout: only the new policies are added |
+| `tests/test_upgrade.py` | 1.1.0 from the registry, then this checkout: only the rule's pattern and description change |
 | `tests/test_validation.py` | Inputs and the ExternalIds parameter's contents, at plan |
+
+The forwarding tests judge every pattern with EventBridge's `TestEventPattern`, never the JSON alone, for GuardDuty,
+Inspector, CSPM (`Security Hub`) and exposure (`Security Hub Exposure Detection`) findings: `finding_event` sets the
+sample's `metadata.product.name`, GuardDuty's when no product is given. `test_forwarding_pattern.py` plans the
+validation root with `-target` on the rule, which depends on neither parameter, so it creates nothing.
 
 The connector tests install the tidy way, `connector_applied` in `conftest.py`: apply Part 1's parameters with
 `-target`, fill them, apply everything, with a stand-in for LoopProof's registration API on 127.0.0.1
@@ -143,10 +156,9 @@ of its own, as `test_excluded_accounts_change.py` does.
 
 `test_upgrade.py` installs `test_data/upgrade`, a tenant's root, at `UPGRADE_FROM_VERSION` from the registry, by
 writing `main_override.tf` (gitignored) to swap the module's source, then removes it and plans this checkout: only
-`ADDED` may be created, only the role's description and `module_version` tag may change, and nothing registers
-again. A change that
-adds or changes a resource updates `ADDED`, or the test's other checks, and moves `UPGRADE_FROM_VERSION` to the
-latest release. Don't name it `*MODULE_VERSION`: bumpversion would rewrite it.
+`ADDED` may be created, only `UPDATED`'s attributes may change, besides the role's `module_version` tag at a release,
+and nothing registers again. A change that adds or changes a resource updates `ADDED` or `UPDATED`, and moves
+`UPGRADE_FROM_VERSION` to the latest release. Don't name it `*MODULE_VERSION`: bumpversion would rewrite it.
 
 `test_rotation.py` takes about 20 minutes on purpose. After a trust policy change, STS refuses a newly added
 ExternalId now and then for a few minutes (a value listed before and after is never refused), so each step waits
