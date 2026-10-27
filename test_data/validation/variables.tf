@@ -40,8 +40,3 @@ variable "excluded_accounts" {
   type    = list(string)
   default = null
 }
-
-variable "enable_control_tower_aggregator_query" {
-  type    = bool
-  default = null
-}

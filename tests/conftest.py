@@ -82,16 +82,18 @@ NO_PASTE_AFTER_PROOF = (
 # A new or changed trust policy can take a minute or more to apply everywhere in IAM.
 IAM_PROPAGATION_TIMEOUT = 300
 
-# What the connector role may do without the aggregator query: read findings and set their status and
-# comment, read the excluded accounts, and read repositories' tags. Nothing more, and no write but the
+# What the connector role may do: read findings and set their status and comment, read the excluded
+# accounts, read repositories' tags and query the Config aggregators. Nothing more, and no write but the
 # findings' status and comment.
 CONNECTOR_ACTIONS = {
     "securityhub:GetFindings",
     "securityhub:BatchUpdateFindings",
     "ssm:GetParameter",
     "ecr:ListTagsForResource",
+    "config:SelectAggregateResourceConfig",
 }
-# AWS Control Tower's AWS Config aggregator in the Audit account, which the module looks up by name.
+# AWS Control Tower's AWS Config aggregator in the Audit account, which LoopProof queries by name. The
+# connector root creates a stand-in of that name.
 CONTROL_TOWER_AGGREGATOR = "aws-controltower-GuardrailsComplianceAggregator"
 # A tag of the connector root's stand-in for a tenant's ECR repository.
 REPOSITORY_TAG = {"Key": "team", "Value": "loopproof-pytest"}
@@ -171,7 +173,6 @@ def connector_tfvars(
     test_role_arn: Optional[str],
     registration_url: str,
     excluded_accounts: Optional[List[str]] = None,
-    enable_control_tower_aggregator_query: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Build the variables of the ``connector`` test root module. The ExternalIds and the registration
@@ -181,8 +182,6 @@ def connector_tfvars(
     :param test_role_arn: Role that Terraform assumes, if any.
     :param registration_url: Where the module reports the role ARN.
     :param excluded_accounts: Accounts whose findings aren't forwarded; ``None`` for the module's default.
-    :param enable_control_tower_aggregator_query: Whether the connector role may query Control Tower's
-        aggregator; ``None`` for the module's default.
     :return: Variable names and values.
     """
     return {
@@ -191,7 +190,6 @@ def connector_tfvars(
         "environment": TEST_ENVIRONMENT,
         "registration_url": registration_url,
         "excluded_accounts": excluded_accounts,
-        "enable_control_tower_aggregator_query": enable_control_tower_aggregator_query,
     }
 
 

@@ -1,7 +1,7 @@
 """
-A plain install, without excluded accounts or the aggregator query: the resources, the outputs, the
-trust policy, the connector's permissions, among them the read of repositories' tags, the forwarding
-rule and the excluded accounts' parameter. The tests share one deployment.
+A plain install, without excluded accounts: the resources, the outputs, the trust policy, the
+connector's permissions, among them the reads of resource tags, the forwarding rule and the excluded
+accounts' parameter. The tests share one deployment.
 """
 
 import json
@@ -14,6 +14,7 @@ from botocore.exceptions import ClientError
 from tests.conftest import (
     CONNECTOR_ACTIONS,
     CONNECTOR_ROOT,
+    CONTROL_TOWER_AGGREGATOR,
     EXCLUDED_ACCOUNTS_PARAMETER,
     EXTERNAL_IDS_PARAMETER,
     MODULE_VERSION,
@@ -181,12 +182,13 @@ def test_connector_trust_policy(connector, iam_client):
 def test_connector_permissions(connector, iam_client):
     """
     The connector role may only read findings and set their status and comment, read the excluded
-    accounts and read repositories' tags. Without the input, it gets no aggregator query.
+    accounts, read repositories' tags and query the Config aggregators.
     """
     role_name = connector["outputs"]["role_name"]
     statements = inline_policy_statements(iam_client, role_name)
 
     assert sorted(iam_client.list_role_policies(RoleName=role_name)["PolicyNames"]) == [
+        "config-aggregator-query",
         "ecr-repository-tags",
         "excluded-accounts-parameter",
         "security-hub-findings",
@@ -316,8 +318,8 @@ def test_connector_ssm_simulated(
 
 def test_connector_repository_tags_policy(connector, iam_client):
     """
-    The connector role's third policy allows ListTagsForResource on the account's ECR repositories, in
-    every Region, and nothing else.
+    The connector role's policy ecr-repository-tags allows ListTagsForResource on the account's ECR
+    repositories, in every Region, and nothing else.
     """
     account_id = connector["outputs"]["event_bus_arn"].split(":")[4]
     statements = policy_statements(
@@ -389,19 +391,60 @@ def test_connector_repository_tags_policy(connector, iam_client):
         ("ecr:GetAuthorizationToken", "*", "implicitDeny"),
         # Nor any other resource's tags.
         ("tag:GetResources", "*", "implicitDeny"),
-        # Without the input, no aggregator query.
+        # A query of any aggregator of the account in the module's Region, and only there.
         (
             "config:SelectAggregateResourceConfig",
+            "arn:aws:config:{region}:{account}:config-aggregator/config-aggregator-abcd1234",
+            "allowed",
+        ),
+        (
+            "config:SelectAggregateResourceConfig",
+            "arn:aws:config:{other_region}:{account}:config-aggregator/config-aggregator-abcd1234",
+            "implicitDeny",
+        ),
+        (
+            "config:SelectAggregateResourceConfig",
+            "arn:aws:config:{region}:{other_account}:config-aggregator/config-aggregator-abcd1234",
+            "implicitDeny",
+        ),
+        # Nothing else of AWS Config: no other read of an aggregator, of the account's own configuration
+        # or of the aggregators' list, and no change to an aggregator.
+        (
+            "config:GetAggregateResourceConfig",
+            "arn:aws:config:{region}:{account}:config-aggregator/config-aggregator-abcd1234",
+            "implicitDeny",
+        ),
+        (
+            "config:BatchGetAggregateResourceConfig",
+            "arn:aws:config:{region}:{account}:config-aggregator/config-aggregator-abcd1234",
+            "implicitDeny",
+        ),
+        (
+            "config:ListAggregateDiscoveredResources",
+            "arn:aws:config:{region}:{account}:config-aggregator/config-aggregator-abcd1234",
+            "implicitDeny",
+        ),
+        (
+            "config:PutConfigurationAggregator",
+            "arn:aws:config:{region}:{account}:config-aggregator/config-aggregator-abcd1234",
+            "implicitDeny",
+        ),
+        (
+            "config:DeleteConfigurationAggregator",
             "arn:aws:config:{region}:{account}:config-aggregator/config-aggregator-abcd1234",
             "implicitDeny",
         ),
         ("config:DescribeConfigurationAggregators", "*", "implicitDeny"),
+        ("config:SelectResourceConfig", "*", "implicitDeny"),
     ],
 )
 def test_connector_tags_simulated(
     connector, iam_client, aws_region, action, resource, decision
 ):
-    """The IAM policy simulator lets the connector role read the account's repositories' tags, and no more."""
+    """
+    The IAM policy simulator lets the connector role read the account's repositories' tags and query the
+    account's aggregators in the module's Region, and no more.
+    """
     account_id = connector["outputs"]["event_bus_arn"].split(":")[4]
     other_region = "us-east-1" if aws_region != "us-east-1" else "us-west-1"
     result = iam_client.simulate_principal_policy(
@@ -462,6 +505,80 @@ def test_connector_reads_repository_tags(connector, boto3_session, aws_region):
             resourceArn=repository_arn, tags=[{"Key": "added", "Value": "by-loopproof"}]
         ),
         lambda: tagging.get_resources(),
+    ]
+    for call in refused:
+        with pytest.raises(ClientError) as err:
+            call()
+        assert err.value.response["Error"]["Code"] == "AccessDeniedException"
+
+
+def test_connector_aggregator_policy(connector, iam_client, aws_region):
+    """
+    The connector role's policy config-aggregator-query allows SelectAggregateResourceConfig on every
+    aggregator of the account in the module's Region, and nothing else.
+    """
+    account_id = connector["outputs"]["event_bus_arn"].split(":")[4]
+    statements = policy_statements(
+        iam_client.get_role_policy(
+            RoleName=connector["outputs"]["role_name"],
+            PolicyName="config-aggregator-query",
+        )["PolicyDocument"]
+    )
+
+    assert len(statements) == 1
+    assert statements[0]["Effect"] == "Allow"
+    assert as_list(statements[0]["Action"]) == ["config:SelectAggregateResourceConfig"]
+    assert as_list(statements[0]["Resource"]) == [
+        f"arn:aws:config:{aws_region}:{account_id}:config-aggregator/*"
+    ]
+    assert "Condition" not in statements[0]
+
+
+def test_connector_queries_aggregator(connector, boto3_session, aws_region):
+    """
+    As the connector role, LoopProof queries Control Tower's aggregator by its name, without having to
+    find it, and can't list the aggregators or query the account's own configuration.
+    """
+    outputs = connector["outputs"]
+    probe = ConnectorProbe(boto3_session, aws_region, outputs["role_arn"])
+    query = (
+        "SELECT accountId, awsRegion, resourceId, tags"
+        " WHERE resourceType = 'AWS::ECR::Repository'"
+    )
+    answers: List[Dict[str, Any]] = []
+
+    def select() -> bool:
+        try:
+            config = probe.session(
+                outputs["probe_role_arn"], connector["external_id"]
+            ).client("config")
+            answers.append(
+                config.select_aggregate_resource_config(
+                    Expression=query,
+                    ConfigurationAggregatorName=CONTROL_TOWER_AGGREGATOR,
+                )
+            )
+        except ClientError as err:
+            # Until IAM has the changes, STS answers AccessDenied, or InvalidClientTokenId for the new probe
+            # role's credentials, and AWS Config AccessDeniedException.
+            if err.response["Error"]["Code"] in (
+                "AccessDenied",
+                "InvalidClientTokenId",
+                "AccessDeniedException",
+            ):
+                return False
+            raise
+        return True
+
+    wait_for(select, "the connector role can query the aggregator")
+    assert isinstance(answers[-1]["Results"], list)
+
+    config = probe.session(outputs["probe_role_arn"], connector["external_id"]).client(
+        "config"
+    )
+    refused: List[Callable[[], Any]] = [
+        lambda: config.describe_configuration_aggregators(),
+        lambda: config.select_resource_config(Expression=query),
     ]
     for call in refused:
         with pytest.raises(ClientError) as err:
