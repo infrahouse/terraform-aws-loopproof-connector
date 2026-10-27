@@ -8,8 +8,9 @@ A role of another environment, another account, or any caller without the Extern
 
 ## Permissions
 
-The role can read findings, set their status and comment, read the list of the accounts you exclude, and read the
-tags of the resources findings relate to, and nothing else:
+The role can read findings, set their status and comment, read the list of the accounts you exclude, read your ECR
+repositories' tags, and query your Config aggregators, which can return any configuration they hold, not only tags;
+nothing else:
 
 * `securityhub:GetFindings`, which `GetFindingsV2` requires;
 * `securityhub:BatchUpdateFindings`, which `BatchUpdateFindingsV2` requires, denied when the request sets

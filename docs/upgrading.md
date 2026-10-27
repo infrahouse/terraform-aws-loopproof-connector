@@ -4,15 +4,17 @@
 
 This release lets the connector role read resource tags, for the findings whose resource carries none: the tags of
 the account's ECR repositories, and a query of the account's Config aggregators in the module's Region, such as AWS
-Control Tower's. See [Resource tags](architecture.md#resource-tags). No input or output changes.
+Control Tower's, which can return any configuration an aggregator holds. See
+[Resource tags](architecture.md#resource-tags) and [Security](security.md#permissions). No input or output changes.
 
 ### Steps
 
 1. **Change the module's version** and run `terraform init`.
 2. **`terraform apply`.** The plan adds the connector role's policies `ecr-repository-tags` and
-   `config-aggregator-query`, and changes the role's `module_version` tag in place.
+   `config-aggregator-query`, and changes the role's description, which names them, and its `module_version` tag,
+   in place.
 
-Nothing else changes: the role, its trust and its other policies, the forwarding rule and both parameters stay as they
+Nothing else changes: the role's trust and its other policies, the forwarding rule and both parameters stay as they
 are, and none is replaced. The registration doesn't run again, and the registration token isn't needed.
 
 ## From 0.3.0
