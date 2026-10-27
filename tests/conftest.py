@@ -81,6 +81,8 @@ NO_PASTE_AFTER_PROOF = (
 
 # A new or changed trust policy can take a minute or more to apply everywhere in IAM.
 IAM_PROPAGATION_TIMEOUT = 300
+# How long ConnectorProbe retries STS refusing a new stand-in role's credentials as invalid.
+INVALID_TOKEN_TIMEOUT = 120
 
 # What the connector role may do: read findings and set their status and comment, read the excluded
 # accounts, read repositories' tags and query the Config aggregators. Nothing more, and no write but the
@@ -488,21 +490,37 @@ class ConnectorProbe:
         :param principal_role_arn: The stand-in control-plane role to call from.
         :param external_id: ExternalId to present, or None to present none.
         :return: Session as the connector role.
-        :raise ClientError: If STS refuses.
+        :raise ClientError: If STS refuses, or keeps refusing the stand-in role's credentials as invalid.
         """
-        return assumed_session(
-            self._principal(principal_role_arn),
-            self._connector_role_arn,
-            self._region,
-            external_id,
-        )
+        deadline = time.time() + INVALID_TOKEN_TIMEOUT
+        while True:
+            try:
+                return assumed_session(
+                    self._principal(principal_role_arn),
+                    self._connector_role_arn,
+                    self._region,
+                    external_id,
+                )
+            except ClientError as err:
+                # For a while after a stand-in role is created, STS refuses the credentials it issued for it
+                # with InvalidClientTokenId now and then, even after it has accepted them. The caller's own
+                # credentials, never the connector role's trust policy, so retrying hides no denial.
+                if (
+                    err.response["Error"]["Code"] != "InvalidClientTokenId"
+                    or time.time() > deadline
+                ):
+                    raise
+                LOG.info(
+                    "STS refused the credentials of %s as invalid; trying again",
+                    principal_role_arn,
+                )
+                time.sleep(5)
 
     # --- Private methods ---
 
     def _principal(self, role_arn: str) -> boto3.Session:
         """
-        Return a session as a stand-in control-plane role, waiting until IAM lets the test role assume it
-        and STS accepts the session's credentials.
+        Return a session as a stand-in control-plane role, waiting until IAM lets the test role assume it.
 
         :param role_arn: The stand-in role.
         :return: Session as that role.
@@ -512,18 +530,11 @@ class ConnectorProbe:
 
             def assumed() -> bool:
                 try:
-                    session = assumed_session(
-                        self._boto3_session, role_arn, self._region
+                    sessions.append(
+                        assumed_session(self._boto3_session, role_arn, self._region)
                     )
-                    # For a few seconds after a role is created, STS may refuse the credentials it just
-                    # issued for it with InvalidClientTokenId, so a test's first call with them would fail.
-                    session.client("sts").get_caller_identity()
-                    sessions.append(session)
                 except ClientError as err:
-                    if err.response["Error"]["Code"] in (
-                        "AccessDenied",
-                        "InvalidClientTokenId",
-                    ):
+                    if err.response["Error"]["Code"] == "AccessDenied":
                         return False
                     raise
                 return True
