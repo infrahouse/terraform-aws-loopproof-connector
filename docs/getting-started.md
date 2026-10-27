@@ -27,8 +27,9 @@ In that account and Region, Security Hub's EventBridge feed carries the findings
 linked Region, and `GetFindingsV2` can read them all.
 
 With AWS Control Tower, LoopProof also reads the tags of your other accounts' resources from Control Tower's Config
-aggregator in Audit, with nothing to set, if Control Tower's home Region is that Region too; see
-[Architecture](architecture.md#resource-tags).
+aggregator in Audit, with nothing to set, if Control Tower's home Region is that Region too. The role's query of an
+aggregator can return any configuration it holds, not only tags; see [Architecture](architecture.md#resource-tags)
+and [Security](security.md#permissions).
 
 ## First deployment
 

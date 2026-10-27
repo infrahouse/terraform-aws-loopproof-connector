@@ -18,8 +18,9 @@ It creates:
   `loopproof-<environment>-*` in `control_plane_account_id`, plus `sts:ExternalId` from the ExternalIds
   parameter, below), allowed
   `securityhub:GetFindings` and `securityhub:BatchUpdateFindings` (its policy `security-hub-findings`), the latter
-  limited by Deny statements on `securityhub:OCSFSyntaxPath/*` to status and comment; and two reads of resource tags,
-  for the tags LoopProof derives from a related resource, such as an ECR image's repository (IH-120):
+  limited by Deny statements on `securityhub:OCSFSyntaxPath/*` to status and comment; and two reads for the tags
+  LoopProof derives from a related resource, such as an ECR image's repository (IH-120), the second of which returns
+  any configuration an aggregator holds, not only tags. The role's description names all of them:
   - `ecr:ListTagsForResource` on `arn:<partition>:ecr:*:<account>:repository/*`, every repository of the account in
     every Region (`ecr-repository-tags`). `tag:GetResources` would serve too, but takes no resource ARN and reads
     every tagged resource's tags;
@@ -112,9 +113,11 @@ Example: `make test-clean TEST_PATH=tests/test_rotation.py`.
 Integration tests with `pytest-infrahouse`, in the InfraHouse test account (`TEST_ROLE`, default region
 `us-west-2`). The test account plays the control plane: `test_data/connector` creates a bus in `us-west-1` and the
 probe roles `loopproof-pytest-probe` (matches the trust) and `outsider-pytest-probe` (doesn't). It plays the tenant's
-resources too: `test_data/connector` creates the ECR repository `loopproof-pytest-tagged`, with a tag, and a
-stand-in for Control Tower's Config aggregator, by its name, over the test account and Region, which
-`test_module.py` queries as the connector role.
+resources too: `test_data/connector` creates the ECR repository `loopproof-pytest-tagged`, with a tag, and the
+aggregator `loopproof-pytest-aggregator`, over the test account and Region, a stand-in for Control Tower's, which
+`test_module.py` queries as the connector role. Never give a stand-in Control Tower's name:
+`PutConfigurationAggregator` also updates an existing aggregator of that name, so in an account that has Control
+Tower's, the tests would take it over and then delete it.
 
 | File | Covers |
 |------|--------|
@@ -140,7 +143,8 @@ of its own, as `test_excluded_accounts_change.py` does.
 
 `test_upgrade.py` installs `test_data/upgrade`, a tenant's root, at `UPGRADE_FROM_VERSION` from the registry, by
 writing `main_override.tf` (gitignored) to swap the module's source, then removes it and plans this checkout: only
-`ADDED` may be created, only the role's `module_version` tag may change, and nothing registers again. A change that
+`ADDED` may be created, only the role's description and `module_version` tag may change, and nothing registers
+again. A change that
 adds or changes a resource updates `ADDED`, or the test's other checks, and moves `UPGRADE_FROM_VERSION` to the
 latest release. Don't name it `*MODULE_VERSION`: bumpversion would rewrite it.
 

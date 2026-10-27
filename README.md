@@ -13,7 +13,8 @@ The LoopProof connector. LoopProof turns your AWS Security Hub findings into Lin
 the access it needs in your account, and nothing more:
 
 * a cross-account IAM role that LoopProof's control plane assumes, with an ExternalId, to read findings and set
-  their status and comment, and to read the tags of the resources they relate to;
+  their status and comment, and to read the tags of the resources they relate to: your ECR repositories' tags, and
+  queries of your Config aggregators, which return any configuration an aggregator holds, not only tags;
 * an EventBridge rule that forwards Security Hub's "Findings Imported V2" events of the severities you choose to
   LoopProof's event bus, except the findings of the accounts you exclude;
 * an SSM parameter that tells LoopProof which accounts you exclude;
@@ -27,8 +28,8 @@ permissions, a long-lived ExternalId in a tfvars file, and an ARN pasted into a 
 
 * trusts only LoopProof's own roles for your environment, by role name and ExternalId;
 * grants the two IAM actions the Security Hub v2 APIs need, and denies any update but status and comment;
-* reads the tags of the resources findings relate to, from your ECR repositories and your Config aggregators, such
-  as AWS Control Tower's;
+* reads your ECR repositories' tags, and nothing else of ECR, and queries your Config aggregators, such as AWS Control
+  Tower's, whose answers can hold any configuration an aggregator holds;
 * treats the ExternalId and the registration token as credentials: it reads both from SSM SecureString parameters
   in your account, never from its inputs, so neither is ever in your code or a tfvars file, and the token is in
   neither the plan nor the state;
@@ -42,7 +43,8 @@ permissions, a long-lived ExternalId in a tfvars file, and an ARN pasted into a 
 * Least-privilege permissions: `securityhub:GetFindings` and `securityhub:BatchUpdateFindings`, the latter confined
   to the status and the comment
 * Resource tags: `ecr:ListTagsForResource` on your account's repositories, and `config:SelectAggregateResourceConfig`
-  on your account's Config aggregators in the module's Region, such as AWS Control Tower's
+  on your account's Config aggregators in the module's Region, such as AWS Control Tower's, which returns any
+  configuration they hold, not only tags
 * Forwarding of new, updated and closed findings by OCSF severity, to a bus in another account and Region
 * Account exclusion: the findings of the accounts in `excluded_accounts` never leave your account, and the list is
   published in SSM for LoopProof to read
@@ -307,8 +309,8 @@ your findings' history through the connector role. You don't need to debug those
 ### Upgrading from 1.0.1
 
 Change the module's version and apply. The plan adds the connector role's policies `ecr-repository-tags` and
-`config-aggregator-query` and changes the role's `module_version` tag in place; it replaces nothing, and the role
-doesn't register again. See [Upgrading](https://infrahouse.github.io/terraform-aws-loopproof-connector/upgrading/).
+`config-aggregator-query`, and changes the role's description, which names them, and its `module_version` tag, in
+place; it replaces nothing, and the role doesn't register again. See [Upgrading](https://infrahouse.github.io/terraform-aws-loopproof-connector/upgrading/).
 
 ### Upgrading from 0.3.0
 

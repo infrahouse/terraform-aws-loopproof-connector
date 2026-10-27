@@ -52,7 +52,8 @@ Its inline policy `security-hub-findings`:
 
 Its inline policy `excluded-accounts-parameter` allows `ssm:GetParameter` on the
 [excluded accounts' parameter](#excluded-accounts) alone, and its policies `ecr-repository-tags` and
-`config-aggregator-query` read [resource tags](#resource-tags).
+`config-aggregator-query` read [resource tags](#resource-tags); the second can read more than tags. The role's
+description names all of them.
 
 The Security Hub v2 APIs have no IAM actions of their own: `GetFindingsV2` uses `securityhub:GetFindings`, and
 `BatchUpdateFindingsV2` uses `securityhub:BatchUpdateFindings`
