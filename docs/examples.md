@@ -24,7 +24,7 @@ resource "aws_ssm_parameter" "loopproof_registration_token" {
 
 module "loopproof_connector" {
   source  = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
-  version = "1.0.1"
+  version = "1.1.0"
 
   environment                      = "production"
   control_plane_account_id         = "123456789012"

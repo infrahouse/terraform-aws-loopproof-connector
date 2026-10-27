@@ -1,5 +1,5 @@
 locals {
-  module_version = "1.0.1"
+  module_version = "1.1.0"
   module_name    = "infrahouse/loopproof-connector/aws"
 
   partition  = data.aws_partition.current.partition
