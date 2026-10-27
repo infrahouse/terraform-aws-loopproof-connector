@@ -50,6 +50,7 @@ PARAMETER_ADDRESSES = [
 PLACEHOLDER = "unset"
 REGISTRATION_ADDRESS = "module.connector.terraform_data.registration"
 ROLE_ADDRESS = "module.connector.aws_iam_role.connector"
+RULE_ADDRESS = "module.connector.aws_cloudwatch_event_rule.findings"
 # JSON, which Terraform loads by itself and `terraform fmt` leaves alone.
 TFVARS_FILE = "terraform.tfvars.json"
 STATE_FILES = ["terraform.tfstate", "terraform.tfstate.backup"]
@@ -110,6 +111,17 @@ OCSF_SEVERITY_IDS = {
     "Other": 99,
 }
 OCSF_ACTIVITY_IDS = {"Create": 1, "Update": 2, "Close": 3}
+# What the rule forwards whatever the severity, by metadata.product.name.
+GUARDDUTY = "GuardDuty"
+# Products the rule forwards by severity only, as Security Hub names them in metadata.product.name:
+# Inspector, CSPM's control findings and Security Hub's exposure findings.
+SEVERITY_FILTERED_PRODUCTS = [
+    "Inspector",
+    "Security Hub",
+    "Security Hub Exposure Detection",
+]
+# The module's default severities.
+DEFAULT_SEVERITIES = ["High", "Critical", "Fatal"]
 
 
 def new_external_id() -> str:
@@ -682,10 +694,13 @@ def ssm_client(boto3_session, aws_region):
 
 
 def finding_event(
-    severity: str, activity: str = "Create", account_id: Optional[str] = None
+    severity: str,
+    activity: str = "Create",
+    account_id: Optional[str] = None,
+    product: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Build a "Findings Imported V2" event from the sample in ``tests/data``.
+    Build a "Findings Imported V2" event from the sample in ``tests/data``, a GuardDuty finding.
 
     The envelope follows
     https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-v2-cwe-event-formats.html,
@@ -695,6 +710,8 @@ def finding_event(
     :param severity: OCSF severity caption, such as ``High``.
     :param activity: OCSF activity: ``Create``, ``Update`` or ``Close``.
     :param account_id: The finding's account, ``cloud.account.uid``; the sample's when ``None``.
+    :param product: The finding's ``metadata.product.name``, such as ``Inspector``; the sample's,
+        ``GuardDuty``, when ``None``. Only the name changes: it is all the rule reads of the product.
     :return: The event.
     """
     with open(SAMPLE_EVENT_PATH, encoding="utf-8") as fp:
@@ -712,16 +729,29 @@ def finding_event(
         finding["status_id"] = 4
     if account_id is not None:
         finding["cloud"]["account"]["uid"] = account_id
+    if product is not None:
+        finding["metadata"]["product"]["name"] = product
     return event
 
 
-def forwarding_pattern_document(excluded_accounts: List[str]) -> Dict[str, Any]:
+def forwarding_pattern_document(
+    excluded_accounts: List[str], severities: Optional[List[str]] = None
+) -> Dict[str, Any]:
     """
     :param excluded_accounts: The excluded accounts, sorted.
-    :return: The forwarding pattern the module should write for the default severities.
+    :param severities: The ``severities`` input; the module's default when ``None``.
+    :return: The forwarding pattern the module should write: a finding of those severities or of
+        GuardDuty, and not of an excluded account.
     """
     findings: Dict[str, Any] = {
-        "severity_id": [OCSF_SEVERITY_IDS[s] for s in ["High", "Critical", "Fatal"]]
+        "$or": [
+            {
+                "severity_id": [
+                    OCSF_SEVERITY_IDS[s] for s in (severities or DEFAULT_SEVERITIES)
+                ]
+            },
+            {"metadata": {"product": {"name": [GUARDDUTY]}}},
+        ]
     }
     if excluded_accounts:
         findings["cloud"] = {"account": {"uid": [{"anything-but": excluded_accounts}]}}
