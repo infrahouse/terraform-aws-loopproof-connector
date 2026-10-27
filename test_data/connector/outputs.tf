@@ -42,6 +42,6 @@ output "repository_arn" {
   value = aws_ecr_repository.tagged.arn
 }
 
-output "aggregator_arn" {
-  value = aws_config_configuration_aggregator.control_tower.arn
+output "aggregator_name" {
+  value = aws_config_configuration_aggregator.stand_in.name
 }

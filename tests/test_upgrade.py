@@ -94,9 +94,9 @@ def test_upgrade_from_previous_release(
     registration_server,
 ):
     """
-    Changing the version adds the connector role's two policies for resource tags and may change the role's
-    module_version tag, in place. It replaces nothing, changes no other resource and doesn't register again,
-    and the next plan is empty.
+    Changing the version adds the connector role's two policies for resource tags, and changes the role's
+    description, which names them, and at a release its module_version tag, in place. It replaces nothing,
+    changes no other resource and doesn't register again, and the next plan is empty.
     """
     write_terraform_tf(UPGRADE_ROOT, aws_provider_version)
     write_tfvars(
@@ -128,7 +128,7 @@ def test_upgrade_from_previous_release(
             terraform_check(UPGRADE_ROOT, "plan", "-input=false", "-out=tfplan")
             changes = planned_changes(UPGRADE_ROOT)
 
-            # No delete, so no replacement, and nothing created but the new policy.
+            # No delete, so no replacement, and nothing created but the new policies.
             assert {
                 address: change["actions"]
                 for address, change in changes.items()
@@ -139,23 +139,22 @@ def test_upgrade_from_previous_release(
                 for address, change in changes.items()
                 if change["actions"] == ["create"]
             } == ADDED
-            # A release changes the role's module_version tag, in place, and nothing else of it.
+            # Only the role changes, in place: its description, and at a release its module_version tag.
             updated = {
                 address: change
                 for address, change in changes.items()
                 if change["actions"] == ["update"]
             }
-            assert set(updated) <= {ROLE_ADDRESS}, updated
-            if updated:
-                change = updated[ROLE_ADDRESS]
-                # An attribute unknown until the apply is missing from "after", so it counts as changed.
-                assert set(changed_keys(change["before"], change["after"])) <= {
-                    "tags",
-                    "tags_all",
-                }
-                assert changed_keys(
-                    change["before"]["tags"], change["after"]["tags"]
-                ) == ["module_version"]
+            assert set(updated) == {ROLE_ADDRESS}, updated
+            change = updated[ROLE_ADDRESS]
+            # An attribute unknown until the apply is missing from "after", so it counts as changed.
+            changed = changed_keys(change["before"], change["after"])
+            assert "description" in changed
+            assert set(changed) <= {"description", "tags", "tags_all"}, changed
+            for tags in ["tags", "tags_all"]:
+                assert set(
+                    changed_keys(change["before"][tags], change["after"][tags])
+                ) <= {"module_version"}
 
             terraform_check(UPGRADE_ROOT, "apply", "-input=false", "tfplan")
             assert len(registration_server.requests) == 1
