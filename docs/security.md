@@ -19,19 +19,21 @@ tags of the resources findings relate to, and nothing else:
   token;
 * `ecr:ListTagsForResource` on the account's ECR repositories, in every Region: their tags, and nothing else of ECR,
   not their images or settings;
-* with `enable_control_tower_aggregator_query`, `config:SelectAggregateResourceConfig` on AWS Control Tower's Config
-  aggregator alone, by its ARN, which the module looks up.
+* `config:SelectAggregateResourceConfig` on the account's AWS Config aggregators in the module's Region, such as AWS
+  Control Tower's in the Audit account: a query, and nothing else of AWS Config, not the account's own configuration
+  or the list of its aggregators.
 
 There is no `iam:*`, no wildcard action, and no write but a finding's status and comment. The two Security Hub
 actions take `"Resource": "*"`: their resource types are optional, and AWS doesn't document which ARN the V2 APIs are
 authorized against. `securityhub:GetFindings` also authorizes the ASFF `GetFindings` API of Security Hub CSPM; IAM
 can't tell the two apart.
 
-The aggregator query reads more than tags. A query can return any configuration the aggregator holds, of every
-resource of the organization's enrolled accounts in Control Tower's governed Regions, such as a security group's rules
-or a bucket's policy: IAM can't limit `SelectAggregateResourceConfig` to some fields, resource types or accounts.
-That's why it's off unless you turn it on. Without it, the role reads nothing of another account but the findings
-Security Hub collects.
+The aggregator query reads more than tags. A query can return any configuration an aggregator holds, of every
+resource it covers, such as a security group's rules or a bucket's policy: for Control Tower's, every resource of the
+organization's enrolled accounts in its governed Regions. IAM can't limit `SelectAggregateResourceConfig` to some
+fields, resource types or accounts, and it names an aggregator by an ARN that ends in a generated ID, not its name,
+so the grant covers every aggregator of the account in the module's Region (`config-aggregator/*`): any you made
+yourself too. Where the account has none, it reaches nothing.
 
 The forwarder role may only `events:PutEvents` on LoopProof's bus, and only EventBridge, for this rule, may assume it.
 
@@ -43,9 +45,6 @@ Besides what managing IAM roles, EventBridge rules and SSM parameters takes:
   apply, and Terraform refreshes Part 1's parameters.
 * `kms:Decrypt` on the key, if Part 1 gives the parameters a customer-managed key (`key_id`). With the default
   `aws/ssm`, whose key policy allows the account's principals to use it through SSM, nothing more is needed.
-* With `enable_control_tower_aggregator_query`, `cloudcontrol:GetResource`, `config:DescribeConfigurationAggregators`
-  and `config:ListTagsForResource`: the module looks Control Tower's aggregator up through Cloud Control, which calls
-  the last two, on every plan.
 
 Filling the parameters takes `ssm:PutParameter`, and with a customer-managed key `kms:Encrypt` and
 `kms:GenerateDataKey` too.
