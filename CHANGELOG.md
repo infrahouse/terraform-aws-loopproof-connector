@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-10-27
+
+### Bug Fixes
+
+- The connector role's description names the tag reads, and that an aggregator query returns any configuration (IH-120)
+
+### Documentation
+
+- The connector role's tag reads, the aggregator input, its permissions and the upgrade from 1.0.1 (IH-120)
+- The aggregator grant covers every aggregator of the account and Region, with nothing to set (IH-120)
+- An aggregator query returns any configuration, not only tags, wherever the role's reads are listed (IH-120)
+
+### Features
+
+- The connector role reads ECR repositories' tags, and Control Tower's Config aggregator when asked (IH-120)
+- Query every Config aggregator of the account in the module's Region, without an input or a lookup (IH-120)
+
+### Testing
+
+- The connector role reads repositories' tags, queries Control Tower's aggregator when asked, and upgrades from 1.0.1 adding only that (IH-120)
+- A missing aggregator fails the plan with the provider's "couldn't find resource" (IH-120)
+- Retry a new probe role's InvalidClientTokenId in the tag reads, as IAM settles (IH-120)
+- The connector role queries any Config aggregator of its account and Region, with no input (IH-120)
+- The stand-in aggregator never takes Control Tower's name, and the upgrade updates the role's description (IH-120)
+- Wait until STS accepts a new probe role's credentials before a test uses them (IH-120)
+- ConnectorProbe retries InvalidClientTokenId for two minutes, wherever a test assumes through it (IH-120)
+- Keep the ExternalId out of an upgrade assertion's message, and give REPOSITORY_TAG its comment (IH-120)
+
 ## [1.0.1] - 2026-10-25
 
 ### Bug Fixes
