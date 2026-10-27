@@ -91,11 +91,7 @@ CONNECTOR_ACTIONS = {
     "ssm:GetParameter",
     "ecr:ListTagsForResource",
     "config:SelectAggregateResourceConfig",
-}
-# AWS Control Tower's AWS Config aggregator in the Audit account, which LoopProof queries by name. The
-# connector root creates a stand-in of that name.
-CONTROL_TOWER_AGGREGATOR = "aws-controltower-GuardrailsComplianceAggregator"
-# A tag of the connector root's stand-in for a tenant's ECR repository.
+}  # A tag of the connector root's stand-in for a tenant's ECR repository.
 REPOSITORY_TAG = {"Key": "team", "Value": "loopproof-pytest"}
 
 # OCSF enums, from https://schema.ocsf.io/1.6.0/classes/detection_finding.

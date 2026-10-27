@@ -53,10 +53,12 @@ resource "aws_ecr_repository" "tagged" {
   }
 }
 
-# Stands in for AWS Control Tower's Config aggregator, by its name, over this account and Region, which
-# LoopProof queries with the connector role.
-resource "aws_config_configuration_aggregator" "control_tower" {
-  name = "aws-controltower-GuardrailsComplianceAggregator"
+# Stands in for AWS Control Tower's Config aggregator, over this account and Region, which LoopProof
+# queries with the connector role. Not by Control Tower's name: PutConfigurationAggregator, which creates
+# it, also updates an existing aggregator of the same name, so in an account that has Control Tower's,
+# the tests would take it over and then delete it.
+resource "aws_config_configuration_aggregator" "stand_in" {
+  name = "loopproof-${var.environment}-aggregator"
 
   account_aggregation_source {
     account_ids = [data.aws_caller_identity.current.account_id]

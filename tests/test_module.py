@@ -14,7 +14,6 @@ from botocore.exceptions import ClientError
 from tests.conftest import (
     CONNECTOR_ACTIONS,
     CONNECTOR_ROOT,
-    CONTROL_TOWER_AGGREGATOR,
     EXCLUDED_ACCOUNTS_PARAMETER,
     EXTERNAL_IDS_PARAMETER,
     MODULE_VERSION,
@@ -536,8 +535,8 @@ def test_connector_aggregator_policy(connector, iam_client, aws_region):
 
 def test_connector_queries_aggregator(connector, boto3_session, aws_region):
     """
-    As the connector role, LoopProof queries Control Tower's aggregator by its name, without having to
-    find it, and can't list the aggregators or query the account's own configuration.
+    As the connector role, LoopProof queries an aggregator by its name, as it queries Control Tower's,
+    without having to find it, and can't list the aggregators or query the account's own configuration.
     """
     outputs = connector["outputs"]
     probe = ConnectorProbe(boto3_session, aws_region, outputs["role_arn"])
@@ -555,7 +554,7 @@ def test_connector_queries_aggregator(connector, boto3_session, aws_region):
             answers.append(
                 config.select_aggregate_resource_config(
                     Expression=query,
-                    ConfigurationAggregatorName=CONTROL_TOWER_AGGREGATOR,
+                    ConfigurationAggregatorName=outputs["aggregator_name"],
                 )
             )
         except ClientError as err:
