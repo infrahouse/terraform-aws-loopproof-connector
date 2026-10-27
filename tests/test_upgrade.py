@@ -9,15 +9,20 @@ import os
 import subprocess
 from os import path as osp
 from textwrap import dedent
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 import pytest
 
 from tests.conftest import (
     ROLE_ADDRESS,
+    RULE_ADDRESS,
+    RULE_NAME,
     TEST_ENVIRONMENT,
     UPGRADE_ROOT,
     connector_applied,
+    finding_event,
+    forwarded,
+    forwarding_pattern_document,
     new_external_id,
     new_registration_token,
     terraform,
@@ -27,16 +32,17 @@ from tests.conftest import (
 )
 
 # The release tenants run before this one.
-UPGRADE_FROM_VERSION = "1.0.1"
+UPGRADE_FROM_VERSION = "1.1.0"
 REGISTRY_SOURCE = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
 # Terraform merges an override file's module block into the root's, so this one swaps the root's source,
 # this checkout, for the release on the registry.
 OVERRIDE_FILE = osp.join(UPGRADE_ROOT, "main_override.tf")
-# All the upgrade may create: the connector role's policies for resource tags.
-ADDED = {
-    "module.connector.aws_iam_role_policy.connector_repository_tags",
-    "module.connector.aws_iam_role_policy.connector_config_aggregator",
-}
+# All the upgrade may create: nothing.
+ADDED: Set[str] = set()
+# What it changes in place, and which of their attributes: the forwarding rule's pattern, which forwards
+# GuardDuty's findings at every severity, and its description, which says so. At a release, the role's
+# module_version tag changes too, and the test checks it apart.
+UPDATED = {RULE_ADDRESS: ["description", "event_pattern"]}
 
 
 def pin_previous_release() -> None:
@@ -91,12 +97,14 @@ def test_upgrade_from_previous_release(
     keep_after,
     ssm_client,
     iam_client,
+    events_client,
     registration_server,
 ):
     """
-    Changing the version adds the connector role's two policies for resource tags, and changes the role's
-    description, which names them, and at a release its module_version tag, in place. It replaces nothing,
-    changes no other resource and doesn't register again, and the next plan is empty.
+    Changing the version changes the forwarding rule's pattern and description in place, so that a Low
+    GuardDuty finding, dropped before, is forwarded after, and at a release the role's module_version tag.
+    It creates and replaces nothing, changes no other resource and doesn't register again, and the next
+    plan is empty.
     """
     write_terraform_tf(UPGRADE_ROOT, aws_provider_version)
     write_tfvars(
@@ -122,13 +130,15 @@ def test_upgrade_from_previous_release(
             tags = {tag["Key"]: tag["Value"] for tag in role["Tags"]}
             assert tags["module_version"] == UPGRADE_FROM_VERSION
             assert len(registration_server.requests) == 1
+            # The sample is a GuardDuty finding: the previous release forwards it by severity only.
+            assert not forwarded(events_client, finding_event("Low"))
 
             os.remove(OVERRIDE_FILE)
             terraform_check(UPGRADE_ROOT, "init", "-input=false")
             terraform_check(UPGRADE_ROOT, "plan", "-input=false", "-out=tfplan")
             changes = planned_changes(UPGRADE_ROOT)
 
-            # No delete, so no replacement, and nothing created but the new policies.
+            # No delete, so no replacement, and nothing created but ADDED.
             assert {
                 address: change["actions"]
                 for address, change in changes.items()
@@ -139,28 +149,39 @@ def test_upgrade_from_previous_release(
                 for address, change in changes.items()
                 if change["actions"] == ["create"]
             } == ADDED
-            # Only the role changes, in place: its description, and at a release its module_version tag.
             updated = {
                 address: change
                 for address, change in changes.items()
                 if change["actions"] == ["update"]
             }
-            # The message names addresses and actions only: a change's before and after hold the ExternalId.
-            assert set(updated) == {ROLE_ADDRESS}, {
-                address: change["actions"] for address, change in updated.items()
-            }
-            change = updated[ROLE_ADDRESS]
-            # An attribute unknown until the apply is missing from "after", so it counts as changed.
-            changed = changed_keys(change["before"], change["after"])
-            assert "description" in changed
-            assert set(changed) <= {"description", "tags", "tags_all"}, changed
-            for tags in ["tags", "tags_all"]:
-                assert set(
-                    changed_keys(change["before"][tags], change["after"][tags])
-                ) <= {"module_version"}
+            # The messages name addresses and attribute names only: the role's before and after hold the
+            # ExternalId.
+            assert set(updated) - {ROLE_ADDRESS} == set(UPDATED), sorted(updated)
+            for address, attributes in UPDATED.items():
+                # An attribute unknown until the apply is missing from "after", so it counts as changed.
+                changed = changed_keys(
+                    updated[address]["before"], updated[address]["after"]
+                )
+                assert changed == attributes, address
+            assert json.loads(
+                updated[RULE_ADDRESS]["after"]["event_pattern"]
+            ) == forwarding_pattern_document([])
+            # At a release, the role's module_version tag, and nothing else of the role.
+            if ROLE_ADDRESS in updated:
+                change = updated[ROLE_ADDRESS]
+                changed = changed_keys(change["before"], change["after"])
+                assert set(changed) <= {"tags", "tags_all"}, changed
+                for tags in ["tags", "tags_all"]:
+                    assert set(
+                        changed_keys(change["before"][tags], change["after"][tags])
+                    ) <= {"module_version"}
 
             terraform_check(UPGRADE_ROOT, "apply", "-input=false", "tfplan")
             assert len(registration_server.requests) == 1
+            assert json.loads(
+                events_client.describe_rule(Name=RULE_NAME)["EventPattern"]
+            ) == forwarding_pattern_document([])
+            assert forwarded(events_client, finding_event("Low"))
             assert sorted(
                 iam_client.list_role_policies(RoleName=role_name)["PolicyNames"]
             ) == [
