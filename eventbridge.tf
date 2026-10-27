@@ -1,6 +1,9 @@
 resource "aws_cloudwatch_event_rule" "findings" {
-  name           = local.rule_name
-  description    = "Forwards Security Hub findings of the selected severities to LoopProof ${var.environment}."
+  name = local.rule_name
+  description = join(" ", [
+    "Forwards Security Hub's GuardDuty findings of every severity, and its other findings of the selected",
+    "severities, to LoopProof ${var.environment}.",
+  ])
   event_bus_name = "default"
   event_pattern  = jsonencode(local.event_pattern)
   tags           = local.tags
