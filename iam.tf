@@ -1,5 +1,6 @@
 # The connector role: LoopProof's control plane assumes it to read findings and update their
-# status and comment, and to read the tags of the resources the findings relate to.
+# status and comment, and to read the tags of the resources the findings relate to, from ECR and from
+# AWS Config aggregators, whose queries return any configuration an aggregator holds, not only tags.
 
 data "aws_iam_policy_document" "connector_trust" {
   statement {
@@ -82,8 +83,11 @@ data "aws_iam_policy_document" "connector_permissions" {
 }
 
 resource "aws_iam_role" "connector" {
-  name        = local.connector_role_name
-  description = "Lets LoopProof ${var.environment} read Security Hub findings and set their status and comment."
+  name = local.connector_role_name
+  description = join(" ", [
+    "Lets LoopProof ${var.environment} read Security Hub findings and set their status and comment,",
+    "read ECR repositories' tags, and query AWS Config aggregators, which return any configuration they hold.",
+  ])
   # The trust policy holds the ExternalIds. Terraform doesn't carry the parameter value's sensitivity into
   # the policy document's JSON, so mark it here to keep the ExternalIds out of plan output.
   assume_role_policy = sensitive(data.aws_iam_policy_document.connector_trust.json)
