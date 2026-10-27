@@ -15,8 +15,9 @@ the access it needs in your account, and nothing more:
 * a cross-account IAM role that LoopProof's control plane assumes, with an ExternalId, to read findings and set
   their status and comment, and to read the tags of the resources they relate to: your ECR repositories' tags, and
   queries of your Config aggregators, which return any configuration an aggregator holds, not only tags;
-* an EventBridge rule that forwards Security Hub's "Findings Imported V2" events of the severities you choose to
-  LoopProof's event bus, except the findings of the accounts you exclude;
+* an EventBridge rule that forwards Security Hub's "Findings Imported V2" events to LoopProof's event bus:
+  GuardDuty's findings at every severity, and the other findings of the severities you choose, except the findings of
+  the accounts you exclude;
 * an SSM parameter that tells LoopProof which accounts you exclude;
 * one call, on the apply that creates the role, that reports the role's ARN and the Region to LoopProof, so
   onboarding needs no copy and paste.
@@ -45,7 +46,8 @@ permissions, a long-lived ExternalId in a tfvars file, and an ARN pasted into a 
 * Resource tags: `ecr:ListTagsForResource` on your account's repositories, and `config:SelectAggregateResourceConfig`
   on your account's Config aggregators in the module's Region, such as AWS Control Tower's, which returns any
   configuration they hold, not only tags
-* Forwarding of new, updated and closed findings by OCSF severity, to a bus in another account and Region
+* Forwarding of new, updated and closed findings, GuardDuty's at every severity and the others' by OCSF severity, to a
+  bus in another account and Region
 * Account exclusion: the findings of the accounts in `excluded_accounts` never leave your account, and the list is
   published in SSM for LoopProof to read
 * Forwarder role that may only `events:PutEvents` on LoopProof's bus
@@ -398,7 +400,7 @@ No modules.
 | <a name="input_external_ids_parameter_arn"></a> [external\_ids\_parameter\_arn](#input\_external\_ids\_parameter\_arn) | ARN of the SSM SecureString parameter that holds the ExternalIds LoopProof presents when it assumes the<br/>connector role, as a JSON list: one value, or two during a rotation. Pass the ARN of the parameter your<br/>root creates, aws\_ssm\_parameter.<name>.arn, never the value. The module reads it with the AWS<br/>provider's credentials. Until you fill it, it holds the placeholder "unset", and the apply stops there. | `string` | n/a | yes |
 | <a name="input_registration_token_parameter_arn"></a> [registration\_token\_parameter\_arn](#input\_registration\_token\_parameter\_arn) | ARN of the SSM SecureString parameter that holds the registration token (lprt\_...) from LoopProof's<br/>onboarding. Pass the ARN of the parameter your root creates, aws\_ssm\_parameter.<name>.arn, never the<br/>value. The module reads it as an ephemeral value, so the token is in neither the plan nor the state, and<br/>uses it once: on the apply that creates the connector role, it reports the role's ARN and the Region to<br/>registration\_url. | `string` | n/a | yes |
 | <a name="input_registration_url"></a> [registration\_url](#input\_registration\_url) | LoopProof's connector registration endpoint, such as<br/>https://api.staging.loopproof.ai/connector/registrations. The module POSTs the connector<br/>role's ARN and the Region it is applied in there. It must use https://;<br/>http:// is accepted only for 127.0.0.1 and localhost, for tests. | `string` | n/a | yes |
-| <a name="input_severities"></a> [severities](#input\_severities) | Severities of the Security Hub findings to forward, as they appear in the OCSF severity field:<br/>Unknown, Informational, Low, Medium, High, Critical, Fatal or Other. | `list(string)` | <pre>[<br/>  "High",<br/>  "Critical",<br/>  "Fatal"<br/>]</pre> | no |
+| <a name="input_severities"></a> [severities](#input\_severities) | Severities of the Security Hub findings to forward, as they appear in the OCSF severity field:<br/>Unknown, Informational, Low, Medium, High, Critical, Fatal or Other. GuardDuty's findings are<br/>forwarded at every severity, whatever this lists. | `list(string)` | <pre>[<br/>  "High",<br/>  "Critical",<br/>  "Fatal"<br/>]</pre> | no |
 
 ## Outputs
 

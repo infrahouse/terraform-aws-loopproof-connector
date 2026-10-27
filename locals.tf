@@ -41,26 +41,40 @@ locals {
     Other         = 99
   }
 
+  # The products whose findings are forwarded at every severity, whatever var.severities lists, by the
+  # finding's metadata.product.name as Security Hub writes it. GuardDuty's findings are few, a threat
+  # below High is still a threat, and a finding whose severity drops still arrives as an event (IH-65,
+  # Aleks, 2026-10-27). Not an input: LoopProof decides what it acts on, and a tenant who forwarded
+  # less would hide the events it relies on.
+  every_severity_products = ["GuardDuty"]
+
   # Security Hub sends one finding per "Findings Imported V2" event, at detail.findings[0], for new,
   # updated and closed findings alike. The rule doesn't filter on activity: the control plane drops
   # the echoes of its own updates.
   # https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-v2-cwe-event-formats.html
+  # A finding is forwarded if its severity_id is among var.severities, or ($or) its product is among
+  # every_severity_products. The account filter, beside the $or, applies to both alike.
+  # https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-create-pattern-operators.html
   event_pattern = {
     source        = ["aws.securityhub"]
     "detail-type" = ["Findings Imported V2"]
     detail = {
       findings = merge(
-        { severity_id = [for severity in var.severities : local.severity_ids[severity]] },
+        {
+          "$or" = [
+            { severity_id = [for severity in var.severities : local.severity_ids[severity]] },
+            { metadata = { product = { name = local.every_severity_products } } },
+          ]
+        },
         local.excluded_accounts_filter...
       )
     }
   }
 
   # The finding's account is cloud.account.uid. "anything-but" with no values isn't a valid pattern, so
-  # the filter is there only when an account is excluded, and a tenant who excludes none keeps the
-  # pattern it had before. Like the rest of the pattern, it relies on one finding per event:
-  # EventBridge matches an array when any element matches, so an event that also held a finding of
-  # another account would be forwarded whole.
+  # the filter is there only when an account is excluded. Like the rest of the pattern, it relies on one
+  # finding per event: EventBridge matches an array when any element matches, so an event that also held
+  # a finding of another account would be forwarded whole.
   excluded_accounts_filter = length(local.excluded_accounts) > 0 ? [
     { cloud = { account = { uid = [{ "anything-but" = local.excluded_accounts }] } } }
   ] : []

@@ -120,7 +120,8 @@ variable "severities" {
   type        = list(string)
   description = <<-EOT
     Severities of the Security Hub findings to forward, as they appear in the OCSF severity field:
-    Unknown, Informational, Low, Medium, High, Critical, Fatal or Other.
+    Unknown, Informational, Low, Medium, High, Critical, Fatal or Other. GuardDuty's findings are
+    forwarded at every severity, whatever this lists.
   EOT
   default     = ["High", "Critical", "Fatal"]
   nullable    = false
