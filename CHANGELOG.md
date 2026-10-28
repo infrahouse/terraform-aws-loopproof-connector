@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-10-28
+
+### Documentation
+
+- The rule forwards GuardDuty's findings at every severity, why, and the upgrade from 1.1.0 (IH-65)
+- The upgrade from 1.1.0 shows the forwarder role's trust policy as known after apply, and why (IH-65)
+- Keep CLAUDE.md's new lines within 120 characters (IH-65, review round 1)
+
+### Features
+
+- Forward GuardDuty's findings at every severity, and the other products' by severities, in the one rule (IH-65)
+
+### Testing
+
+- GuardDuty's findings are forwarded at every severity, the other products' by severities, and an excluded account's never (IH-65)
+- The upgrade from 1.1.0 changes the rule's pattern and description in place, and nothing else (IH-65)
+- The upgrade's plan reads the forwarder role's trust policy again at apply, and the apply leaves it as it was (IH-65)
+
 ## [1.1.0] - 2026-10-27
 
 ### Bug Fixes
