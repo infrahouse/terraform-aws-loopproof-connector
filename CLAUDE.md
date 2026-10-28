@@ -137,7 +137,7 @@ Tower's, the tests would take it over and then delete it.
 | `tests/test_excluded_accounts_change.py` | `[]` → `[account]` → `[]`, each in place, then an empty plan |
 | `tests/test_forwarding_pattern.py` | The rule alone, planned: default and widened `severities`, with and without exclusions |
 | `tests/test_rotation.py` | The parameter `[old]` → `[old, new]` → `[new]` without a failed AssumeRole |
-| `tests/test_upgrade.py` | 1.1.0 from the registry, then this checkout: only the rule's pattern and description change |
+| `tests/test_upgrade.py` | 1.1.0 from the registry, then this checkout: the rule's pattern and description change |
 | `tests/test_validation.py` | Inputs and the ExternalIds parameter's contents, at plan |
 
 The forwarding tests judge every pattern with EventBridge's `TestEventPattern`, never the JSON alone, for GuardDuty,
@@ -157,7 +157,8 @@ of its own, as `test_excluded_accounts_change.py` does.
 `test_upgrade.py` installs `test_data/upgrade`, a tenant's root, at `UPGRADE_FROM_VERSION` from the registry, by
 writing `main_override.tf` (gitignored) to swap the module's source, then removes it and plans this checkout: only
 `ADDED` may be created, only `UPDATED`'s attributes may change, besides the role's `module_version` tag at a release,
-and nothing registers again. A change that adds or changes a resource updates `ADDED` or `UPDATED`, and moves
+and nothing registers again. A change to the rule shows the forwarder role's trust policy as known after apply, since
+the policy names the rule's ARN; the test checks the apply leaves it as it was. A change that adds or changes a resource updates `ADDED` or `UPDATED`, and moves
 `UPGRADE_FROM_VERSION` to the latest release. Don't name it `*MODULE_VERSION`: bumpversion would rewrite it.
 
 `test_rotation.py` takes about 20 minutes on purpose. After a trust policy change, STS refuses a newly added
