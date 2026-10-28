@@ -12,11 +12,14 @@ change but its version.
 
 1. **Change the module's version** and run `terraform init`.
 2. **`terraform apply`.** The plan changes the forwarding rule's pattern and description, and the connector role's
-   `module_version` tag, in place.
+   `module_version` tag, in place. It also shows the forwarder role's `assume_role_policy` as `(known after apply)`:
+   the policy names the rule's ARN, and Terraform reads it again only once the rule's update is applied. The ARN
+   doesn't change, so the apply leaves the policy as it is. A change to `excluded_accounts` shows the same.
 
-Nothing else changes: the role's trust and policies, the rule's target, the forwarder role and both parameters stay as
-they are, and none is replaced. The registration doesn't run again, and the registration token isn't needed. From the
-apply on, LoopProof receives GuardDuty's findings below High as Security Hub imports or updates them.
+Nothing else changes: the connector role's trust and policies, the rule's target, the forwarder role's permissions
+and both parameters stay as they are, and none is replaced. The registration doesn't run again, and the registration
+token isn't needed. From the apply on, LoopProof receives GuardDuty's findings below High as Security Hub imports or
+updates them.
 
 ## From 1.0.1
 
