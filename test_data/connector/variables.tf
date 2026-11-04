@@ -32,7 +32,12 @@ variable "excluded_accounts" {
 
 # Any shape, so that each rule names only the fields it needs, as a tenant writes them: rules with
 # different fields don't make a list of one type until the module converts them.
-variable "accept_rules" {
+variable "threat_accept_rules" {
+  type    = any
+  default = null
+}
+
+variable "vulnerability_accept_rules" {
   type    = any
   default = null
 }

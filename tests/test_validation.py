@@ -6,7 +6,7 @@ tests create and delete themselves.
 
 import json
 from copy import deepcopy
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import pytest
 
@@ -14,14 +14,18 @@ from tests.conftest import (
     EXCEPTION_RULE,
     PLACEHOLDER,
     STANDARD_PARAMETER_LIMIT,
+    THREAT_KIND,
     THREAT_RULE,
     VALIDATION_ROOT,
     new_external_id,
     new_registration_token,
     printed,
+    published_rule,
     rule_of_length,
+    ssm_length,
     terraform,
     terraform_check,
+    terraform_json,
     VULN_CVE_RULE,
     VULN_PACKAGE_RULE,
     write_terraform_tf,
@@ -164,55 +168,74 @@ CASES = [
     ),
 ]
 
-# The accept rules' messages: each names the input, and ends with the ids of the rules it refuses.
+# The accept rules' inputs, and their messages: each names the input, and ends with the ids of the rules it
+# refuses. "{input}" is the input's name.
+THREATS = "threat_accept_rules"
+VULNS = "vulnerability_accept_rules"
+NULL_MESSAGE = "{input} must not hold a null rule"
 ID_MESSAGE = (
-    "accept_rules: a rule's id must be 1 to 64 lowercase letters, digits or hyphens, starting with a"
+    "{input}: a rule's id must be 1 to 64 lowercase letters, digits or hyphens, starting with a"
     " letter or digit"
 )
-ID_TWICE_MESSAGE = "accept_rules: no two rules may have the same id"
-KIND_MESSAGE = "accept_rules: a rule's kind must be threat_response or vuln_remediation"
-REASON_MESSAGE = "accept_rules: a rule must give its reason"
-REVIEW_BY_MESSAGE = "accept_rules: a rule's review_by must be a date, YYYY-MM-DD"
+ID_TWICE_MESSAGE = "{input}: no two rules may have the same id"
+ID_IN_BOTH_MESSAGE = f"{VULNS}: a rule's id must not be a {THREATS} rule's id too"
+REASON_MESSAGE = "{input}: a rule must give its reason"
+REVIEW_BY_MESSAGE = "{input}: a rule's review_by must be a date, YYYY-MM-DD"
 DECISION_REF_MESSAGE = (
-    "accept_rules: a rule's decision_ref must be its register entry's Linear issue identifier,"
+    "{input}: a rule's decision_ref must be its register entry's Linear issue identifier,"
     " such as SEC-42"
 )
-THREAT_WHAT_MESSAGE = (
-    "accept_rules: a threat_response rule must name the finding_types it accepts"
-)
-VULN_WHAT_MESSAGE = "accept_rules: a vuln_remediation rule must name the cves it accepts or the package, not both"
+ACCOUNTS_MESSAGE = "{input}: where.accounts must list 12-digit AWS account IDs"
+THREAT_WHAT_MESSAGE = f"{THREATS}: a rule must name the finding_types it accepts"
 FINDING_TYPE_MESSAGE = (
-    "accept_rules: finding_types must be GuardDuty finding types, each in full, such as"
+    f"{THREATS}: finding_types must be GuardDuty finding types, each in full, such as"
     " Recon:EC2/PortProbeUnprotectedPort"
 )
+VULN_WHAT_MESSAGE = (
+    f"{VULNS}: a rule must name the cves it accepts or the package, not both"
+)
 CVE_MESSAGE = (
-    "accept_rules: cves must be CVE identifiers, each in full, such as CVE-2024-12797"
+    f"{VULNS}: cves must be CVE identifiers, each in full, such as CVE-2024-12797"
 )
-PACKAGE_MESSAGE = "accept_rules: a package must have a name and a version, each in full"
-WHERE_MESSAGE = (
-    "accept_rules: a rule's where must name resource_ids, tags or image_repositories; accounts only"
-    " narrows them"
-)
-ACCOUNTS_MESSAGE = "accept_rules: where.accounts must list 12-digit AWS account IDs"
-WHERE_VALUES_MESSAGE = "accept_rules: where's resource_ids, image_repositories and tags must be values in full"
-THREAT_OTHER_MESSAGE = "accept_rules: a threat_response rule must not name cves, a package or image_repositories"
-VULN_OTHER_MESSAGE = "accept_rules: a vuln_remediation rule must not name finding_types or be a behavioral_exception"
-SIZE_MESSAGE = "accept_rules: a rule must fit in 4096 characters as JSON"
+PACKAGE_MESSAGE = f"{VULNS}: a package must have a name and a version, each in full"
+# What differs between the inputs: the where selectors, and the lists a value may not repeat in.
+WHERE_MESSAGES = {
+    THREATS: f"{THREATS}: a rule's where must name resource_ids or tags; accounts only narrows them",
+    VULNS: (
+        f"{VULNS}: a rule's where must name resource_ids, tags or image_repositories; accounts only"
+        " narrows them"
+    ),
+}
+WHERE_VALUES_MESSAGES = {
+    THREATS: f"{THREATS}: where's resource_ids and tags must be values in full",
+    VULNS: f"{VULNS}: where's resource_ids, image_repositories and tags must be values in full",
+}
+REPEAT_MESSAGES = {
+    THREATS: (
+        f"{THREATS}: a rule must not list a value twice in finding_types, where.resource_ids or"
+        " where.accounts"
+    ),
+    VULNS: (
+        f"{VULNS}: a rule must not list a value twice in cves, where.resource_ids,"
+        " where.image_repositories or where.accounts"
+    ),
+}
+SIZE_MESSAGE = "{input}: a rule must fit in 4096 characters as JSON"
 # Characters SSM counts twice, or on their own: an emoji, outside the Basic Multilingual Plane, and a q
 # with a combining acute, which has no precomposed form, so Terraform's normalization leaves it two.
 EMOJI = "\U0001f600"
-COMBINING = "q\u0301"
+COMBINING = "q́"
 # Drops a field from a rule.
 MISSING = object()
 
 
-def rule(base: Dict[str, Any] = None, **changes: Any) -> Dict[str, Any]:
+def rule(base: Dict[str, Any], **changes: Any) -> Dict[str, Any]:
     """
-    :param base: The rule to start from; :data:`THREAT_RULE` when ``None``.
+    :param base: The rule to start from.
     :param changes: Fields to replace, or to drop with :data:`MISSING`.
     :return: A copy of the rule with the changes.
     """
-    changed = deepcopy(THREAT_RULE if base is None else base)
+    changed = deepcopy(base)
     for field, value in changes.items():
         if value is MISSING:
             del changed[field]
@@ -221,264 +244,390 @@ def rule(base: Dict[str, Any] = None, **changes: Any) -> Dict[str, Any]:
     return changed
 
 
-# Each case: the rules, the message, and the ids it should name; None when Terraform's own type check
-# refuses the rules, whose message names the rule's place in the list.
-ACCEPT_RULES_CASES = [
-    ("id-uppercase", [rule(id="Vpn-Port-Probes")], ID_MESSAGE, ["Vpn-Port-Probes"]),
-    ("id-underscore", [rule(id="vpn_port_probes")], ID_MESSAGE, ["vpn_port_probes"]),
-    ("id-leading-hyphen", [rule(id="-vpn")], ID_MESSAGE, ["-vpn"]),
-    ("id-too-long", [rule(id="a" * 65)], ID_MESSAGE, ["a" * 65]),
-    ("id-empty", [rule(id="")], ID_MESSAGE, [""]),
-    (
-        "id-twice",
-        [rule(), rule(VULN_CVE_RULE, id=THREAT_RULE["id"])],
-        ID_TWICE_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    ("kind-missing", [rule(kind=MISSING)], KIND_MESSAGE, [THREAT_RULE["id"]]),
-    ("kind-unknown", [rule(kind="threat")], KIND_MESSAGE, [THREAT_RULE["id"]]),
-    ("reason-missing", [rule(reason=MISSING)], REASON_MESSAGE, [THREAT_RULE["id"]]),
-    ("reason-blank", [rule(reason="  ")], REASON_MESSAGE, [THREAT_RULE["id"]]),
-    (
-        "review-by-missing",
-        [rule(review_by=MISSING)],
-        REVIEW_BY_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "review-by-unpadded",
-        [rule(review_by="2027-3-31")],
-        REVIEW_BY_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "review-by-no-such-day",
-        [rule(review_by="2027-02-30")],
-        REVIEW_BY_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "review-by-timestamp",
-        [rule(review_by="2027-03-31T00:00:00Z")],
-        REVIEW_BY_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "decision-ref-missing",
-        [rule(decision_ref=MISSING)],
-        DECISION_REF_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "decision-ref-lowercase",
-        [rule(decision_ref="sec-42")],
-        DECISION_REF_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "decision-ref-url",
-        [rule(decision_ref="https://linear.app/acme/issue/SEC-42")],
-        DECISION_REF_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "threat-without-finding-types",
-        [rule(finding_types=MISSING)],
-        THREAT_WHAT_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "threat-finding-types-empty",
-        [rule(finding_types=[])],
-        THREAT_WHAT_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "finding-type-wildcard",
-        [rule(finding_types=["Recon:EC2/PortProbe*"])],
-        FINDING_TYPE_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "finding-type-purpose-only",
-        [rule(finding_types=["Recon"])],
-        FINDING_TYPE_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "finding-type-no-purpose",
-        [rule(finding_types=["PortProbeUnprotectedPort"])],
-        FINDING_TYPE_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "vuln-without-what",
-        [rule(VULN_CVE_RULE, cves=MISSING)],
-        VULN_WHAT_MESSAGE,
-        [VULN_CVE_RULE["id"]],
-    ),
-    (
-        "vuln-cves-empty",
-        [rule(VULN_CVE_RULE, cves=[])],
-        VULN_WHAT_MESSAGE,
-        [VULN_CVE_RULE["id"]],
-    ),
-    (
-        "vuln-cves-and-package",
-        [rule(VULN_CVE_RULE, package=VULN_PACKAGE_RULE["package"])],
-        VULN_WHAT_MESSAGE,
-        [VULN_CVE_RULE["id"]],
-    ),
-    (
-        "cve-lowercase",
-        [rule(VULN_CVE_RULE, cves=["cve-2024-12797"])],
-        CVE_MESSAGE,
-        [VULN_CVE_RULE["id"]],
-    ),
-    (
-        "cve-wildcard",
-        [rule(VULN_CVE_RULE, cves=["CVE-2024-*"])],
-        CVE_MESSAGE,
-        [VULN_CVE_RULE["id"]],
-    ),
-    (
-        "package-without-version",
-        [rule(VULN_PACKAGE_RULE, package={"name": "glibc"})],
-        PACKAGE_MESSAGE,
-        [VULN_PACKAGE_RULE["id"]],
-    ),
-    (
-        "package-without-name",
-        [rule(VULN_PACKAGE_RULE, package={"version": "2.26-64.amzn2.0.1"})],
-        PACKAGE_MESSAGE,
-        [VULN_PACKAGE_RULE["id"]],
-    ),
-    (
-        "package-version-wildcard",
-        [rule(VULN_PACKAGE_RULE, package={"name": "glibc", "version": "2.26*"})],
-        PACKAGE_MESSAGE,
-        [VULN_PACKAGE_RULE["id"]],
-    ),
-    ("where-missing", [rule(where=MISSING)], WHERE_MESSAGE, [THREAT_RULE["id"]]),
-    ("where-empty", [rule(where={})], WHERE_MESSAGE, [THREAT_RULE["id"]]),
-    (
-        "where-accounts-alone",
-        [rule(where={"accounts": ["111122223333"]})],
-        WHERE_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "where-empty-selectors",
-        [rule(where={"resource_ids": [], "tags": {}, "accounts": ["111122223333"]})],
-        WHERE_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "where-account-short",
-        [rule(where={"tags": {"role": "vpn"}, "accounts": ["11112222333"]})],
-        ACCOUNTS_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "where-resource-id-wildcard",
-        [rule(where={"resource_ids": ["*"]})],
-        WHERE_VALUES_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "where-resource-id-empty",
-        [rule(where={"resource_ids": [""]})],
-        WHERE_VALUES_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "where-tag-value-wildcard",
-        [rule(where={"tags": {"role": "vpn*"}})],
-        WHERE_VALUES_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "where-image-repository-wildcard",
-        [rule(VULN_CVE_RULE, where={"image_repositories": ["batch-*"]})],
-        WHERE_VALUES_MESSAGE,
-        [VULN_CVE_RULE["id"]],
-    ),
-    (
-        "threat-with-cves",
-        [rule(cves=VULN_CVE_RULE["cves"])],
-        THREAT_OTHER_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "threat-with-package",
-        [rule(package=VULN_PACKAGE_RULE["package"])],
-        THREAT_OTHER_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "threat-with-image-repositories",
-        [rule(where={**THREAT_RULE["where"], "image_repositories": ["batch-worker"]})],
-        THREAT_OTHER_MESSAGE,
-        [THREAT_RULE["id"]],
-    ),
-    (
-        "vuln-with-finding-types",
-        [rule(VULN_CVE_RULE, finding_types=THREAT_RULE["finding_types"])],
-        VULN_OTHER_MESSAGE,
-        [VULN_CVE_RULE["id"]],
-    ),
-    (
-        "vuln-behavioral-exception",
-        [rule(VULN_CVE_RULE, behavioral_exception=True)],
-        VULN_OTHER_MESSAGE,
-        [VULN_CVE_RULE["id"]],
-    ),
-    (
-        "two-rules-refused",
-        [rule(id="first", reason=MISSING), rule(VULN_CVE_RULE, id="second", reason="")],
-        REASON_MESSAGE,
-        ["first", "second"],
-    ),
-    (
-        "over-a-standard-parameter",
-        [rule_of_length(STANDARD_PARAMETER_LIMIT + 1)],
-        SIZE_MESSAGE,
-        ["long-reason"],
-    ),
-    # SSM counts UTF-16 code units: Terraform's length() counts each of these rules as 4096 characters.
-    (
-        "over-a-standard-parameter-by-an-emoji",
-        [rule_of_length(STANDARD_PARAMETER_LIMIT + 1, tail=EMOJI)],
-        SIZE_MESSAGE,
-        ["long-reason"],
-    ),
-    (
-        "over-a-standard-parameter-by-a-combining-mark",
-        [rule_of_length(STANDARD_PARAMETER_LIMIT + 1, tail=COMBINING)],
-        SIZE_MESSAGE,
-        ["long-reason"],
-    ),
-    # Terraform's type check: its message names the input, and the rule by its place in the list.
-    (
-        "finding-types-not-a-list",
-        [rule(finding_types="Recon:EC2/PortProbeUnprotectedPort")],
-        'attribute "finding_types": list of string required',
-        None,
-    ),
-    (
-        "id-missing",
-        [rule(id=MISSING)],
-        'attribute "id" is required',
-        None,
-    ),
-]
-
-
-def rule_values(rules: List[Dict[str, Any]]) -> List[str]:
+def common_cases(name: str, base: Dict[str, Any]) -> List[Tuple[Any, ...]]:
     """
-    :param rules: Rules a case passes.
-    :return: Every value they hold, but their ids and kinds, which the messages may name, and values
-        short enough to occur in a message by chance.
+    The checks both inputs make, each with its own copy in variables.tf, so each is tried on both.
+
+    :param name: The input, :data:`THREATS` or :data:`VULNS`.
+    :param base: A valid rule of that input.
+    :return: Cases as :data:`ACCEPT_RULES_CASES` holds them, their names prefixed with the input's kind.
+    """
+    prefix = "threat" if name == THREATS else "vuln"
+    rule_id = base["id"]
+
+    def case(
+        label: str, rules: List[Any], template: str, ids: Optional[List[str]]
+    ) -> Tuple[Any, ...]:
+        return f"{prefix}-{label}", {name: rules}, template.format(input=name), ids
+
+    return [
+        case("null-rule", [None], NULL_MESSAGE, None),
+        case(
+            "id-uppercase",
+            [rule(base, id="Vpn-Port-Probes")],
+            ID_MESSAGE,
+            ["Vpn-Port-Probes"],
+        ),
+        case(
+            "id-underscore",
+            [rule(base, id="vpn_port_probes")],
+            ID_MESSAGE,
+            ["vpn_port_probes"],
+        ),
+        case("id-leading-hyphen", [rule(base, id="-vpn")], ID_MESSAGE, ["-vpn"]),
+        case("id-too-long", [rule(base, id="a" * 65)], ID_MESSAGE, ["a" * 65]),
+        case("id-empty", [rule(base, id="")], ID_MESSAGE, [""]),
+        case(
+            "id-twice",
+            [base, rule(base, reason="The same rule, written twice")],
+            ID_TWICE_MESSAGE,
+            [rule_id],
+        ),
+        case("reason-missing", [rule(base, reason=MISSING)], REASON_MESSAGE, [rule_id]),
+        case("reason-blank", [rule(base, reason="  ")], REASON_MESSAGE, [rule_id]),
+        case(
+            "review-by-missing",
+            [rule(base, review_by=MISSING)],
+            REVIEW_BY_MESSAGE,
+            [rule_id],
+        ),
+        case(
+            "review-by-unpadded",
+            [rule(base, review_by="2027-3-31")],
+            REVIEW_BY_MESSAGE,
+            [rule_id],
+        ),
+        case(
+            "review-by-no-such-day",
+            [rule(base, review_by="2027-02-30")],
+            REVIEW_BY_MESSAGE,
+            [rule_id],
+        ),
+        case(
+            "review-by-timestamp",
+            [rule(base, review_by="2027-03-31T00:00:00Z")],
+            REVIEW_BY_MESSAGE,
+            [rule_id],
+        ),
+        case(
+            "decision-ref-missing",
+            [rule(base, decision_ref=MISSING)],
+            DECISION_REF_MESSAGE,
+            [rule_id],
+        ),
+        case(
+            "decision-ref-lowercase",
+            [rule(base, decision_ref="sec-42")],
+            DECISION_REF_MESSAGE,
+            [rule_id],
+        ),
+        case(
+            "decision-ref-url",
+            [rule(base, decision_ref="https://linear.app/acme/issue/SEC-42")],
+            DECISION_REF_MESSAGE,
+            [rule_id],
+        ),
+        case(
+            "where-missing",
+            [rule(base, where=MISSING)],
+            WHERE_MESSAGES[name],
+            [rule_id],
+        ),
+        case("where-empty", [rule(base, where={})], WHERE_MESSAGES[name], [rule_id]),
+        case(
+            "where-accounts-alone",
+            [rule(base, where={"accounts": ["111122223333"]})],
+            WHERE_MESSAGES[name],
+            [rule_id],
+        ),
+        case(
+            "where-empty-selectors",
+            [
+                rule(
+                    base,
+                    where={
+                        "resource_ids": [],
+                        "tags": {},
+                        **({"image_repositories": []} if name == VULNS else {}),
+                        "accounts": ["111122223333"],
+                    },
+                )
+            ],
+            WHERE_MESSAGES[name],
+            [rule_id],
+        ),
+        case(
+            "where-account-short",
+            [rule(base, where={"tags": {"role": "vpn"}, "accounts": ["11112222333"]})],
+            ACCOUNTS_MESSAGE,
+            [rule_id],
+        ),
+        case(
+            "where-resource-id-wildcard",
+            [rule(base, where={"resource_ids": ["*"]})],
+            WHERE_VALUES_MESSAGES[name],
+            [rule_id],
+        ),
+        case(
+            "where-resource-id-empty",
+            [rule(base, where={"resource_ids": [""]})],
+            WHERE_VALUES_MESSAGES[name],
+            [rule_id],
+        ),
+        case(
+            "where-tag-value-wildcard",
+            [rule(base, where={"tags": {"role": "vpn*"}})],
+            WHERE_VALUES_MESSAGES[name],
+            [rule_id],
+        ),
+        case(
+            "where-resource-id-twice",
+            [rule(base, where={"resource_ids": ["i-0123456789abcdef0"] * 2})],
+            REPEAT_MESSAGES[name],
+            [rule_id],
+        ),
+        case(
+            "where-account-twice",
+            [
+                rule(
+                    base,
+                    where={"tags": {"role": "vpn"}, "accounts": ["111122223333"] * 2},
+                )
+            ],
+            REPEAT_MESSAGES[name],
+            [rule_id],
+        ),
+        # Terraform's type check: its message names the input, and the rule by its place in the list.
+        case(
+            "id-missing", [rule(base, id=MISSING)], 'attribute "id" is required', None
+        ),
+    ]
+
+
+# Each case: its name, the inputs it sets, the message, and the ids it should name; None when the message
+# names no rule, or when Terraform's own type check refuses the rules and names the rule's place in the
+# list.
+ACCEPT_RULES_CASES = (
+    common_cases(THREATS, THREAT_RULE)
+    + common_cases(VULNS, VULN_CVE_RULE)
+    + [
+        (
+            "id-in-both-inputs",
+            {
+                THREATS: [THREAT_RULE],
+                VULNS: [rule(VULN_CVE_RULE, id=THREAT_RULE["id"])],
+            },
+            ID_IN_BOTH_MESSAGE,
+            [THREAT_RULE["id"]],
+        ),
+        (
+            "threat-without-finding-types",
+            {THREATS: [rule(THREAT_RULE, finding_types=MISSING)]},
+            THREAT_WHAT_MESSAGE,
+            [THREAT_RULE["id"]],
+        ),
+        (
+            "threat-finding-types-empty",
+            {THREATS: [rule(THREAT_RULE, finding_types=[])]},
+            THREAT_WHAT_MESSAGE,
+            [THREAT_RULE["id"]],
+        ),
+        (
+            "finding-type-wildcard",
+            {THREATS: [rule(THREAT_RULE, finding_types=["Recon:EC2/PortProbe*"])]},
+            FINDING_TYPE_MESSAGE,
+            [THREAT_RULE["id"]],
+        ),
+        (
+            "finding-type-purpose-only",
+            {THREATS: [rule(THREAT_RULE, finding_types=["Recon"])]},
+            FINDING_TYPE_MESSAGE,
+            [THREAT_RULE["id"]],
+        ),
+        (
+            "finding-type-no-purpose",
+            {THREATS: [rule(THREAT_RULE, finding_types=["PortProbeUnprotectedPort"])]},
+            FINDING_TYPE_MESSAGE,
+            [THREAT_RULE["id"]],
+        ),
+        (
+            "finding-type-twice",
+            {
+                THREATS: [
+                    rule(
+                        THREAT_RULE,
+                        finding_types=["Recon:EC2/PortProbeUnprotectedPort"] * 2,
+                    )
+                ]
+            },
+            REPEAT_MESSAGES[THREATS],
+            [THREAT_RULE["id"]],
+        ),
+        (
+            "vuln-without-what",
+            {VULNS: [rule(VULN_CVE_RULE, cves=MISSING)]},
+            VULN_WHAT_MESSAGE,
+            [VULN_CVE_RULE["id"]],
+        ),
+        (
+            "vuln-cves-empty",
+            {VULNS: [rule(VULN_CVE_RULE, cves=[])]},
+            VULN_WHAT_MESSAGE,
+            [VULN_CVE_RULE["id"]],
+        ),
+        (
+            "vuln-cves-and-package",
+            {VULNS: [rule(VULN_CVE_RULE, package=VULN_PACKAGE_RULE["package"])]},
+            VULN_WHAT_MESSAGE,
+            [VULN_CVE_RULE["id"]],
+        ),
+        (
+            "cve-lowercase",
+            {VULNS: [rule(VULN_CVE_RULE, cves=["cve-2024-12797"])]},
+            CVE_MESSAGE,
+            [VULN_CVE_RULE["id"]],
+        ),
+        (
+            "cve-wildcard",
+            {VULNS: [rule(VULN_CVE_RULE, cves=["CVE-2024-*"])]},
+            CVE_MESSAGE,
+            [VULN_CVE_RULE["id"]],
+        ),
+        (
+            "cve-twice",
+            {VULNS: [rule(VULN_CVE_RULE, cves=["CVE-2024-12797"] * 2)]},
+            REPEAT_MESSAGES[VULNS],
+            [VULN_CVE_RULE["id"]],
+        ),
+        (
+            "package-without-version",
+            {VULNS: [rule(VULN_PACKAGE_RULE, package={"name": "glibc"})]},
+            PACKAGE_MESSAGE,
+            [VULN_PACKAGE_RULE["id"]],
+        ),
+        (
+            "package-without-name",
+            {
+                VULNS: [
+                    rule(VULN_PACKAGE_RULE, package={"version": "2.26-64.amzn2.0.1"})
+                ]
+            },
+            PACKAGE_MESSAGE,
+            [VULN_PACKAGE_RULE["id"]],
+        ),
+        (
+            "package-version-wildcard",
+            {
+                VULNS: [
+                    rule(
+                        VULN_PACKAGE_RULE, package={"name": "glibc", "version": "2.26*"}
+                    )
+                ]
+            },
+            PACKAGE_MESSAGE,
+            [VULN_PACKAGE_RULE["id"]],
+        ),
+        (
+            "where-image-repository-wildcard",
+            {VULNS: [rule(VULN_CVE_RULE, where={"image_repositories": ["batch-*"]})]},
+            WHERE_VALUES_MESSAGES[VULNS],
+            [VULN_CVE_RULE["id"]],
+        ),
+        (
+            "where-image-repository-twice",
+            {
+                VULNS: [
+                    rule(
+                        VULN_CVE_RULE,
+                        where={"image_repositories": ["batch-worker"] * 2},
+                    )
+                ]
+            },
+            REPEAT_MESSAGES[VULNS],
+            [VULN_CVE_RULE["id"]],
+        ),
+        (
+            "two-rules-refused",
+            {
+                THREATS: [
+                    rule(THREAT_RULE, id="first", reason=MISSING),
+                    rule(EXCEPTION_RULE, id="second", reason=""),
+                ]
+            },
+            REASON_MESSAGE.format(input=THREATS),
+            ["first", "second"],
+        ),
+        (
+            "over-a-standard-parameter",
+            {VULNS: [rule_of_length(STANDARD_PARAMETER_LIMIT + 1)]},
+            SIZE_MESSAGE.format(input=VULNS),
+            ["long-reason"],
+        ),
+        # SSM counts UTF-16 code units: Terraform's length() counts each of these rules as 4096 characters.
+        (
+            "over-a-standard-parameter-by-an-emoji",
+            {VULNS: [rule_of_length(STANDARD_PARAMETER_LIMIT + 1, tail=EMOJI)]},
+            SIZE_MESSAGE.format(input=VULNS),
+            ["long-reason"],
+        ),
+        (
+            "over-a-standard-parameter-by-a-combining-mark",
+            {VULNS: [rule_of_length(STANDARD_PARAMETER_LIMIT + 1, tail=COMBINING)]},
+            SIZE_MESSAGE.format(input=VULNS),
+            ["long-reason"],
+        ),
+        (
+            "over-a-standard-parameter-threat",
+            {
+                THREATS: [
+                    rule(
+                        THREAT_RULE,
+                        reason="x"
+                        * (
+                            STANDARD_PARAMETER_LIMIT
+                            + 1
+                            - ssm_length(
+                                terraform_json(
+                                    published_rule(
+                                        rule(THREAT_RULE, reason=""), THREAT_KIND
+                                    )
+                                )
+                            )
+                        ),
+                    )
+                ]
+            },
+            SIZE_MESSAGE.format(input=THREATS),
+            [THREAT_RULE["id"]],
+        ),
+        # Terraform's type check: its message names the input, and the rule by its place in the list.
+        (
+            "finding-types-not-a-list",
+            {
+                THREATS: [
+                    rule(
+                        THREAT_RULE, finding_types="Recon:EC2/PortProbeUnprotectedPort"
+                    )
+                ]
+            },
+            'attribute "finding_types": list of string required',
+            None,
+        ),
+        (
+            "cves-not-a-list",
+            {VULNS: [rule(VULN_CVE_RULE, cves="CVE-2024-12797")]},
+            'attribute "cves": list of string required',
+            None,
+        ),
+    ]
+)
+
+
+def rule_values(inputs: Dict[str, List[Any]]) -> List[str]:
+    """
+    :param inputs: The accept rules a case passes, by input.
+    :return: Every value they hold, but their ids, which the messages name, and values short enough to
+        occur in a message by chance.
     """
 
     def leaves(value: Any) -> List[str]:
@@ -491,9 +640,11 @@ def rule_values(rules: List[Dict[str, Any]]) -> List[str]:
 
     return [
         value
+        for rules in inputs.values()
         for one in rules
+        if one is not None
         for field, content in one.items()
-        if field not in ("id", "kind")
+        if field != "id"
         for value in leaves(content)
         if len(value.strip()) > 3
     ]
@@ -578,7 +729,8 @@ def tfvars(
         "registration_url": "https://api.staging.loopproof.ai/connector/registrations",
         "severities": None,
         "excluded_accounts": None,
-        "accept_rules": None,
+        "threat_accept_rules": None,
+        "vulnerability_accept_rules": None,
     }
     values.update(overrides)
     return values
@@ -626,26 +778,23 @@ def validation_root(aws_provider_version):
         ({"environment": "production-eu-1"}, [EXTERNAL_ID]),
         ({"excluded_accounts": []}, [EXTERNAL_ID]),
         ({"excluded_accounts": ["987654321012", "210987654321"]}, [EXTERNAL_ID]),
-        ({"accept_rules": []}, [EXTERNAL_ID]),
-        ({"accept_rules": [THREAT_RULE]}, [EXTERNAL_ID]),
-        ({"accept_rules": [VULN_CVE_RULE]}, [EXTERNAL_ID]),
-        ({"accept_rules": [VULN_PACKAGE_RULE]}, [EXTERNAL_ID]),
-        ({"accept_rules": [EXCEPTION_RULE]}, [EXTERNAL_ID]),
+        ({THREATS: [], VULNS: []}, [EXTERNAL_ID]),
+        ({THREATS: [THREAT_RULE]}, [EXTERNAL_ID]),
+        ({VULNS: [VULN_CVE_RULE]}, [EXTERNAL_ID]),
+        ({VULNS: [VULN_PACKAGE_RULE]}, [EXTERNAL_ID]),
+        ({THREATS: [EXCEPTION_RULE]}, [EXTERNAL_ID]),
         (
             {
-                "accept_rules": [
-                    THREAT_RULE,
-                    VULN_CVE_RULE,
-                    VULN_PACKAGE_RULE,
-                    EXCEPTION_RULE,
-                ]
+                THREATS: [THREAT_RULE, EXCEPTION_RULE],
+                VULNS: [VULN_CVE_RULE, VULN_PACKAGE_RULE],
             },
             [EXTERNAL_ID],
         ),
         (
             {
-                "accept_rules": [
+                THREATS: [
                     rule(
+                        THREAT_RULE,
                         id="a" * 64,
                         where={"resource_ids": ["i-0123456789abcdef0"]},
                         review_by="2028-02-29",
@@ -656,11 +805,11 @@ def validation_root(aws_provider_version):
             [EXTERNAL_ID],
         ),
         (
-            {"accept_rules": [rule_of_length(STANDARD_PARAMETER_LIMIT)]},
+            {VULNS: [rule_of_length(STANDARD_PARAMETER_LIMIT)]},
             [EXTERNAL_ID],
         ),
         (
-            {"accept_rules": [rule_of_length(STANDARD_PARAMETER_LIMIT, tail=EMOJI)]},
+            {VULNS: [rule_of_length(STANDARD_PARAMETER_LIMIT, tail=EMOJI)]},
             [EXTERNAL_ID],
         ),
     ],
@@ -673,7 +822,7 @@ def validation_root(aws_provider_version):
         "environment-hyphens",
         "excluded-accounts-empty",
         "excluded-accounts-two",
-        "accept-rules-empty",
+        "accept-rules-both-empty",
         "accept-rules-threat",
         "accept-rules-vuln-cves",
         "accept-rules-vuln-package",
@@ -757,12 +906,12 @@ def test_invalid_external_ids(
     "aws_provider_version", ["~> 6.0"], ids=["aws-6"], scope="module"
 )
 @pytest.mark.parametrize(
-    "rules, message, rule_ids",
+    "inputs, message, rule_ids",
     [case[1:] for case in ACCEPT_RULES_CASES],
     ids=[case[0] for case in ACCEPT_RULES_CASES],
 )
 def test_invalid_accept_rules(
-    validation_root, parameters, aws_region, test_role_arn, rules, message, rule_ids
+    validation_root, parameters, aws_region, test_role_arn, inputs, message, rule_ids
 ):
     """
     A rule of the wrong shape fails the plan, before anything is published, with a message that names
@@ -771,7 +920,7 @@ def test_invalid_accept_rules(
     store_external_ids(parameters, json.dumps([EXTERNAL_ID]))
     write_tfvars(
         validation_root,
-        tfvars(aws_region, test_role_arn, parameters, accept_rules=rules),
+        tfvars(aws_region, test_role_arn, parameters, **inputs),
     )
     result = terraform(validation_root, "plan", "-input=false")
 
@@ -780,7 +929,8 @@ def test_invalid_accept_rules(
     # prints despite the error, and whose words, such as the event pattern's "product", may hold a value.
     diagnostics = " ".join(result.stderr.split())
     assert message in diagnostics
-    assert "accept_rules" in diagnostics
+    for name in inputs:
+        assert name in diagnostics
     # What the diagnostics hold beyond the message and the ids it names, which may hold a value by chance,
     # such as the message's example finding type or a package's name inside a rule's id.
     beyond = diagnostics.replace(message, "")
@@ -788,5 +938,5 @@ def test_invalid_accept_rules(
         named = ", ".join(json.dumps(rule_id) for rule_id in rule_ids)
         assert f"{message}. Rules: {named}." in diagnostics
         beyond = beyond.replace(f". Rules: {named}.", "")
-    for value in rule_values(rules):
+    for value in rule_values(inputs):
         assert " ".join(value.split()) not in beyond, value

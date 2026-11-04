@@ -42,7 +42,12 @@ variable "excluded_accounts" {
 }
 
 # Any shape, so that the validation tests can pass rules the module's type refuses.
-variable "accept_rules" {
+variable "threat_accept_rules" {
+  type    = any
+  default = null
+}
+
+variable "vulnerability_accept_rules" {
   type    = any
   default = null
 }
