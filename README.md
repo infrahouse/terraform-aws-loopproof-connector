@@ -401,8 +401,8 @@ your findings' history through the connector role. You don't need to debug those
 
 Change the module's version and apply. The plan adds the connector role's policy `accept-rules-parameters`, its read
 of the accept rules, which is there with no rule, and changes the role's `module_version` tag in place. Until you set
-`threat_accept_rules` or `vulnerability_accept_rules` it publishes nothing; it replaces nothing, and the role doesn't register again. See
-[Upgrading](https://infrahouse.github.io/terraform-aws-loopproof-connector/upgrading/).
+`threat_accept_rules` or `vulnerability_accept_rules` it publishes nothing; it replaces nothing, and the role doesn't
+register again. See [Upgrading](https://infrahouse.github.io/terraform-aws-loopproof-connector/upgrading/).
 
 ### Upgrading from 1.0.1
 
@@ -451,7 +451,7 @@ Full documentation is at [infrahouse.github.io/terraform-aws-loopproof-connector
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.71.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 6.0 |
 | <a name="provider_terraform"></a> [terraform](#provider\_terraform) | n/a |
 
 ## Modules

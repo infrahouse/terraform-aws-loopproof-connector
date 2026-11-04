@@ -105,7 +105,9 @@ looks shorter than 4096 characters can still be refused.
 
 Terraform drops an attribute the input's type doesn't name without an error, so a misspelled field, such as
 `acounts` or `finding_type`, never reaches the rule, and nor does a field of the other kind, such as `cves` in a
-threat rule. Compare the field names with [Configuration](configuration.md#threat_accept_rules-and-vulnerability_accept_rules), and read the parameter's value in the plan.
+threat rule. Compare the field names with
+[Configuration](configuration.md#threat_accept_rules-and-vulnerability_accept_rules), and read the parameter's value
+in the plan.
 
 ## LoopProof can't derive the tags of another account's resources
 
