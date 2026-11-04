@@ -39,6 +39,8 @@ UPGRADE_ROOT = osp.join(TERRAFORM_ROOT_DIR, "upgrade")
 TEST_ENVIRONMENT = "pytest"
 RULE_NAME = f"loopproof-{TEST_ENVIRONMENT}-findings"
 EXCLUDED_ACCOUNTS_PARAMETER = f"/loopproof/{TEST_ENVIRONMENT}/excluded-accounts"
+# Where the module publishes accept_rules, one parameter per rule, named by its id.
+ACCEPT_RULES_PATH = f"/loopproof/{TEST_ENVIRONMENT}/accept-rules"
 # Part 1 of the install, which test_data/connector creates as the README tells a tenant to.
 EXTERNAL_IDS_PARAMETER = f"/loopproof/{TEST_ENVIRONMENT}/external-ids"
 REGISTRATION_TOKEN_PARAMETER = f"/loopproof/{TEST_ENVIRONMENT}/registration-token"
@@ -86,15 +88,25 @@ IAM_PROPAGATION_TIMEOUT = 300
 INVALID_TOKEN_TIMEOUT = 120
 
 # What the connector role may do: read findings and set their status and comment, read the excluded
-# accounts, read repositories' tags and query the Config aggregators. Nothing more, and no write but the
-# findings' status and comment.
+# accounts and the accept rules, read repositories' tags and query the Config aggregators. Nothing more,
+# and no write but the findings' status and comment.
 CONNECTOR_ACTIONS = {
     "securityhub:GetFindings",
     "securityhub:BatchUpdateFindings",
     "ssm:GetParameter",
+    "ssm:GetParameters",
+    "ssm:GetParametersByPath",
     "ecr:ListTagsForResource",
     "config:SelectAggregateResourceConfig",
 }
+# The connector role's inline policies, by name.
+CONNECTOR_POLICIES = [
+    "accept-rules-parameters",
+    "config-aggregator-query",
+    "ecr-repository-tags",
+    "excluded-accounts-parameter",
+    "security-hub-findings",
+]
 # A tag of the connector root's stand-in for a tenant's ECR repository.
 REPOSITORY_TAG = {"Key": "team", "Value": "loopproof-pytest"}
 
@@ -122,6 +134,58 @@ SEVERITY_FILTERED_PRODUCTS = [
 ]
 # The module's default severities.
 DEFAULT_SEVERITIES = ["High", "Critical", "Fatal"]
+
+# One accept rule of each shape, with documentation account IDs. Their lists are out of order on purpose:
+# the module sorts them.
+THREAT_RULE = {
+    "id": "vpn-port-probes",
+    "kind": "threat_response",
+    "finding_types": [
+        "Recon:EC2/PortProbeUnprotectedPort",
+        "Recon:EC2/PortProbeEMRUnprotectedPort",
+    ],
+    "where": {
+        "tags": {"role": "vpn", "env": "prod"},
+        "accounts": ["444455556666", "111122223333"],
+    },
+    "reason": "VPN endpoints are public by design",
+    "review_by": "2027-03-31",
+    "decision_ref": "SEC-42",
+}
+VULN_CVE_RULE = {
+    "id": "openssl-unreachable",
+    "kind": "vuln_remediation",
+    "cves": ["CVE-2024-5535", "CVE-2024-12797"],
+    "where": {"image_repositories": ["batch-worker"]},
+    "reason": "The worker never opens a TLS connection",
+    "review_by": "2027-01-15",
+    "decision_ref": "SEC-43",
+}
+VULN_PACKAGE_RULE = {
+    "id": "legacy-glibc",
+    "kind": "vuln_remediation",
+    "package": {"name": "glibc", "version": "2.26-64.amzn2.0.1"},
+    "where": {"resource_ids": ["i-0123456789abcdef0"]},
+    "reason": "The instance is retired in January",
+    "review_by": "2027-01-31",
+    "decision_ref": "OPS-7",
+}
+# GuardDuty's type for command and control, which LoopProof denylists: only an exception rule may accept
+# it, which LoopProof judges, not the module. The ampersand is one of the characters jsonencode escapes.
+EXCEPTION_RULE = {
+    "id": "pentest-box-c2",
+    "kind": "threat_response",
+    "behavioral_exception": True,
+    "finding_types": ["Backdoor:EC2/C&CActivity.B!DNS"],
+    "where": {
+        "resource_ids": [
+            "arn:aws:ec2:us-west-2:111122223333:instance/i-0fedcba9876543210"
+        ]
+    },
+    "reason": "The red team's C2 server during the November pentest",
+    "review_by": "2026-11-30",
+    "decision_ref": "SEC-44",
+}
 
 
 def new_external_id() -> str:
@@ -184,6 +248,7 @@ def connector_tfvars(
     test_role_arn: Optional[str],
     registration_url: str,
     excluded_accounts: Optional[List[str]] = None,
+    accept_rules: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Build the variables of the ``connector`` test root module. The ExternalIds and the registration
@@ -193,6 +258,7 @@ def connector_tfvars(
     :param test_role_arn: Role that Terraform assumes, if any.
     :param registration_url: Where the module reports the role ARN.
     :param excluded_accounts: Accounts whose findings aren't forwarded; ``None`` for the module's default.
+    :param accept_rules: The tenant's accept rules; ``None`` for the module's default, none.
     :return: Variable names and values.
     """
     return {
@@ -201,7 +267,77 @@ def connector_tfvars(
         "environment": TEST_ENVIRONMENT,
         "registration_url": registration_url,
         "excluded_accounts": excluded_accounts,
+        "accept_rules": accept_rules,
     }
+
+
+def terraform_json(value: Any) -> str:
+    """
+    Encode a value as Terraform's ``jsonencode`` does: object keys sorted, no whitespace, non-ASCII
+    characters as they are, and ``<``, ``>``, ``&``, U+2028 and U+2029 escaped, as Go's encoder escapes
+    them. Those characters occur only inside JSON strings, so replacing them in the output is safe.
+
+    :param value: A JSON value.
+    :return: The bytes ``jsonencode`` would write, as a string.
+    """
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    for character, escape in [
+        ("<", "\\u003c"),
+        (">", "\\u003e"),
+        ("&", "\\u0026"),
+        ("\u2028", "\\u2028"),
+        ("\u2029", "\\u2029"),
+    ]:
+        encoded = encoded.replace(character, escape)
+    return encoded
+
+
+def published_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    What the module publishes for a valid rule, as LoopProof reads it: every field the rule sets, its
+    lists sorted, and none it leaves unset, an empty list, an empty map or a false behavioral_exception
+    included. :func:`terraform_json` gives the bytes.
+
+    :param rule: A rule as the tenant writes it in ``accept_rules``.
+    :return: The rule's published value, decoded.
+    """
+    value = {
+        field: rule[field]
+        for field in ["id", "kind", "reason", "review_by", "decision_ref"]
+    }
+    for field in ["finding_types", "cves"]:
+        if rule.get(field):
+            value[field] = sorted(rule[field])
+    if rule.get("package") is not None:
+        value["package"] = rule["package"]
+    where = {}
+    for field in ["resource_ids", "image_repositories", "accounts"]:
+        if rule["where"].get(field):
+            where[field] = sorted(rule["where"][field])
+    if rule["where"].get("tags"):
+        where["tags"] = rule["where"]["tags"]
+    value["where"] = where
+    if rule.get("behavioral_exception"):
+        value["behavioral_exception"] = True
+    return value
+
+
+def accept_rules_by_path(ssm_client: Any) -> Dict[str, Dict[str, Any]]:
+    """
+    Read every parameter under the accept rules' path, as LoopProof reads them: by path, a page at a time.
+
+    :param ssm_client: Systems Manager in the tenant's Region, as whoever reads.
+    :return: Each parameter by name, as ``GetParametersByPath`` returns it.
+    """
+    parameters = {}
+    for page in ssm_client.get_paginator("get_parameters_by_path").paginate(
+        Path=ACCEPT_RULES_PATH
+    ):
+        for parameter in page["Parameters"]:
+            parameters[parameter["Name"]] = parameter
+    return parameters
 
 
 def terraform(

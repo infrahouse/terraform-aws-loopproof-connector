@@ -41,6 +41,7 @@ module "connector" {
   registration_url                 = var.registration_url
   severities                       = var.severities
   excluded_accounts                = var.excluded_accounts
+  accept_rules                     = var.accept_rules
 }
 
 # Stands in for a repository of the tenant's, whose tags LoopProof reads with the connector role.
