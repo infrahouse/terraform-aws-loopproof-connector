@@ -18,7 +18,7 @@ the access it needs in your account, and nothing more:
 * an EventBridge rule that forwards Security Hub's "Findings Imported V2" events to LoopProof's event bus:
   GuardDuty's findings at every severity, and the other findings of the severities you choose, except the findings of
   the accounts you exclude;
-* an SSM parameter that tells LoopProof which accounts you exclude;
+* an SSM parameter that tells LoopProof which accounts you exclude, and one per accept rule, the risks you accept;
 * one call, on the apply that creates the role, that reports the role's ARN and the Region to LoopProof, so
   onboarding needs no copy and paste.
 
@@ -50,10 +50,13 @@ permissions, a long-lived ExternalId in a tfvars file, and an ARN pasted into a 
   bus in another account and Region
 * Account exclusion: the findings of the accounts in `excluded_accounts` never leave your account, and the list is
   published in SSM for LoopProof to read
+* Accept rules: the risks you accept, written in `accept_rules` and changed by pull request in your repository, each
+  published in SSM for LoopProof to read and never to write
 * Forwarder role that may only `events:PutEvents` on LoopProof's bus
 * The ExternalIds read from an SSM parameter, checked before use; the registration token read as an ephemeral value
 * Self-registration once, at apply, with `curl`, retried on connection errors and 5xx answers only
-* Input validation for account ID, parameter ARNs, bus ARN, registration URL, severities and excluded accounts
+* Input validation for account ID, parameter ARNs, bus ARN, registration URL, severities, excluded accounts and the
+  shape of each accept rule
 
 ## Quick Start
 
@@ -269,13 +272,93 @@ module "loopproof_connector" {
 * The module publishes the list, sorted, as JSON in the SSM `String` parameter
   `/loopproof/<environment>/excluded-accounts`, in the module's Region; the `excluded_accounts_parameter` output
   names it. The parameter exists, holding `[]`, when you exclude nothing. LoopProof reads it with the connector role
-  when it proves your account, and daily after, to keep those accounts out of its scope. The role may read that
-  parameter and nothing else in SSM: not the ExternalIds' or the token's.
+  when it proves your account, and daily after, to keep those accounts out of its scope. In SSM, the role may read
+  that parameter and the [accept rules](#accepting-risks), and nothing else: not the ExternalIds' or the token's.
 * A change takes effect on the next apply. Make it as you change the rest of your Terraform, by pull request;
   LoopProof doesn't ask why.
 * IAM can't limit `securityhub:GetFindings` to some accounts, so the connector role can still read an excluded
   account's findings through `GetFindingsV2`. The list is how LoopProof knows to leave them out.
 * EventBridge limits a rule's pattern to 4096 characters, which holds about 250 excluded accounts.
+
+### Accepting risks
+
+A risk you accept, such as port probes on a VPN endpoint that is public by design, is an accept rule in
+`accept_rules`. LoopProof suppresses the findings a rule matches, citing the rule, its version and its register entry,
+instead of filing them as work. The rule lives in your Terraform, so you add, change or remove it by pull request in
+your repository, with your own review. LoopProof reads it and never writes it.
+
+```hcl
+module "loopproof_connector" {
+  # ...
+  accept_rules = [
+    {
+      id            = "vpn-port-probes"
+      kind          = "threat_response"
+      finding_types = ["Recon:EC2/PortProbeUnprotectedPort"]
+      where = {
+        tags     = { role = "vpn" }
+        accounts = ["111122223333"] # narrows, never alone
+      }
+      reason       = "VPN endpoints are public by design"
+      review_by    = "2027-03-31"
+      decision_ref = "SEC-42" # its register entry
+    },
+    {
+      id   = "openssl-unreachable"
+      kind = "vuln_remediation"
+      cves = ["CVE-2024-12797"]
+      where = {
+        image_repositories = ["batch-worker"]
+      }
+      reason       = "The worker never opens a TLS connection"
+      review_by    = "2027-01-15"
+      decision_ref = "SEC-43"
+    },
+  ]
+}
+```
+
+A rule has:
+
+* `id`: 1 to 64 lowercase letters, digits or hyphens, starting with a letter or digit, and no other rule's;
+* `kind`: `threat_response`, for GuardDuty's threats, or `vuln_remediation`, for vulnerabilities;
+* `reason`, and `review_by`, a date (`YYYY-MM-DD`), after which the rule stops applying unless a change renews it;
+* `decision_ref`: its register entry's Linear issue identifier, such as `SEC-42`;
+* **what** it accepts, each value in full, with no prefix or wildcard: for a `threat_response` rule, GuardDuty's
+  `finding_types`; for a `vuln_remediation` rule, `cves`, or a source `package`'s `name` and `version`;
+* **where** it applies: in `where`, at least one of `resource_ids`, `tags` and, for a `vuln_remediation` rule,
+  `image_repositories`. `accounts` narrows a rule further but never stands alone: an account alone would accept
+  everything in it;
+* `behavioral_exception`: `false` unless set; see below.
+
+How it works:
+
+* **Each rule needs its register entry:** an issue in your Linear workspace, in the intake team's "LoopProof risk
+  register" project, and not canceled. LoopProof reads it in Linear before the rule loads.
+* **The module publishes each rule** as JSON in its own SSM `String` parameter,
+  `/loopproof/<environment>/accept-rules/<id>`, in the module's Region; the `accept_rules_parameter_path` output
+  names the path. With no rule, there is no parameter. The connector role may read the parameters under that path,
+  and nothing else new.
+* **LoopProof reads the rules within 15 minutes of the apply,** or at once when an admin of your tenant asks on its
+  Settings page. It numbers a rule's versions itself, v1 and then one more for each change of its content; you write
+  no version.
+* **The module checks each rule's shape at plan,** so a typo fails before anything is published; each message names
+  `accept_rules` and the rule's id. A rule must fit in a Standard parameter's 4096 characters as JSON; split a larger
+  one into narrower rules.
+* **Read the published value in the plan.** Terraform drops an attribute the module's type doesn't name without an
+  error, so a rule with a misspelled field, such as `acounts`, publishes without it.
+
+LoopProof judges what a rule means when it loads it, and refuses, as a load error it shows in its Settings:
+
+* an ordinary rule that accepts a threat on its behavioral denylist: a GuardDuty type whose threat purpose is
+  `Backdoor`, `PrivilegeEscalation` or `CredentialAccess`, or whose family is `ReverseShell` or
+  `InstanceCredentialExfiltration`;
+* an exception rule, `behavioral_exception = true`, the only kind that accepts a denylisted threat, unless it names
+  one finding type and one resource by its id, with no tags or accounts, and a `review_by` within 30 days of
+  LoopProof's first reading of it.
+
+A change that fails to load leaves the rule's last good version in force; remove the rule from your Terraform to stop
+it.
 
 ### Resource tags
 
@@ -307,6 +390,13 @@ Until LoopProof has proven your account (a later onboarding step, in which it as
 your events. EventBridge doesn't retry a permission error; without a dead-letter queue, it drops the event and
 counts it in the rule's `FailedInvocations` metric. Nothing is lost: once the account is proven, LoopProof imports
 your findings' history through the connector role. You don't need to debug those failures.
+
+### Upgrading from 1.2.0
+
+Change the module's version and apply. The plan adds the connector role's policy `accept-rules-parameters`, its read
+of the accept rules, which is there with no rule, and changes the role's `module_version` tag in place. Until you set
+`accept_rules` it publishes nothing; it replaces nothing, and the role doesn't register again. See
+[Upgrading](https://infrahouse.github.io/terraform-aws-loopproof-connector/upgrading/).
 
 ### Upgrading from 1.0.1
 
