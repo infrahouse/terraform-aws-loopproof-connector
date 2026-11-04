@@ -11,6 +11,13 @@ locals {
   forwarder_role_name              = "loopproof-${var.environment}-forwarder"
   rule_name                        = "loopproof-${var.environment}-findings"
   excluded_accounts_parameter_name = "/loopproof/${var.environment}/excluded-accounts"
+  accept_rules_parameter_path      = "/loopproof/${var.environment}/accept-rules"
+  # A hierarchical parameter's name starts with "/", which its ARN doesn't repeat. The parameters are in the
+  # module's Region, as the excluded accounts' is.
+  accept_rules_path_arn = join("", [
+    "arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter",
+    local.accept_rules_parameter_path,
+  ])
 
   # What Part 1 of the install creates both of the tenant's parameters with, until the tenant fills them.
   placeholder = "unset"
@@ -21,6 +28,47 @@ locals {
 
   # Sorted, so that reordering the list changes neither the rule nor the parameter.
   excluded_accounts = sort(var.excluded_accounts)
+
+  # Each accept rule as LoopProof reads it, by id: the fields the rule sets, sorted by name, as jsonencode
+  # writes an object, with its lists sorted, so that the same rule publishes the same bytes however it is
+  # written, and the plan of a reordered list is empty. A field the rule leaves unset is left out, and so are
+  # an empty list or map and a false behavioral_exception, which say no more than an unset field.
+  accept_rules = {
+    for rule in var.accept_rules : rule.id => jsonencode({
+      for field, value in {
+        id           = rule.id
+        kind         = rule.kind
+        reason       = rule.reason
+        review_by    = rule.review_by
+        decision_ref = rule.decision_ref
+        finding_types = (
+          rule.finding_types == null ? null : length(rule.finding_types) > 0 ? sort(rule.finding_types) : null
+        )
+        cves    = rule.cves == null ? null : length(rule.cves) > 0 ? sort(rule.cves) : null
+        package = rule.package
+        where = rule.where == null ? null : {
+          for selector, values in {
+            resource_ids = (
+              rule.where.resource_ids == null ? null
+              : length(rule.where.resource_ids) > 0 ? sort(rule.where.resource_ids) : null
+            )
+            tags = rule.where.tags == null ? null : length(rule.where.tags) > 0 ? rule.where.tags : null
+            image_repositories = (
+              rule.where.image_repositories == null ? null
+              : length(rule.where.image_repositories) > 0 ? sort(rule.where.image_repositories) : null
+            )
+            accounts = (
+              rule.where.accounts == null ? null
+              : length(rule.where.accounts) > 0 ? sort(rule.where.accounts) : null
+            )
+          } : selector => values if values != null
+        }
+        behavioral_exception = rule.behavioral_exception ? true : null
+      } : field => value if value != null
+    })
+  }
+  # What a Standard parameter holds is 4096 characters.
+  accept_rule_lengths = { for id, value in local.accept_rules : id => length(value) }
 
   # Only the control plane's own roles for this environment may assume the connector role.
   control_plane_iam_prefix   = "arn:${local.partition}:iam::${var.control_plane_account_id}"
