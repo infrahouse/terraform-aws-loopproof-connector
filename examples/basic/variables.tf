@@ -28,3 +28,21 @@ variable "excluded_accounts" {
   description = "AWS accounts to keep out of LoopProof, such as an account outside your audit scope."
   default     = []
 }
+
+# Any shape, so that each rule names only the fields it needs; the module checks each rule at plan. See
+# "Accepting risks" in the module's README, for example:
+#
+#   accept_rules = [{
+#     id            = "vpn-port-probes"
+#     kind          = "threat_response"
+#     finding_types = ["Recon:EC2/PortProbeUnprotectedPort"]
+#     where         = { tags = { role = "vpn" } }
+#     reason        = "VPN endpoints are public by design"
+#     review_by     = "2027-03-31"
+#     decision_ref  = "SEC-42"
+#   }]
+variable "accept_rules" {
+  type        = any
+  description = "Your accept rules: the risks you accept, each with its register entry in Linear."
+  default     = []
+}

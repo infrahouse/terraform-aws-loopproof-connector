@@ -18,3 +18,8 @@ output "excluded_accounts_parameter" {
   description = "The SSM parameter where LoopProof reads the excluded accounts."
   value       = module.loopproof_connector.excluded_accounts_parameter
 }
+
+output "accept_rules_parameter_path" {
+  description = "The SSM path where LoopProof reads the accept rules, one parameter per rule."
+  value       = module.loopproof_connector.accept_rules_parameter_path
+}
