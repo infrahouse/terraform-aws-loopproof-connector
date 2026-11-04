@@ -29,3 +29,10 @@ variable "excluded_accounts" {
   type    = list(string)
   default = null
 }
+
+# Any shape, so that each rule names only the fields it needs, as a tenant writes them: rules with
+# different fields don't make a list of one type until the module converts them.
+variable "accept_rules" {
+  type    = any
+  default = null
+}

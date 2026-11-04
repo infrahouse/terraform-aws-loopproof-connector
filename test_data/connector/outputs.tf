@@ -18,6 +18,10 @@ output "excluded_accounts_parameter" {
   value = module.connector.excluded_accounts_parameter
 }
 
+output "accept_rules_parameter_path" {
+  value = module.connector.accept_rules_parameter_path
+}
+
 output "external_ids_parameter_arn" {
   value = aws_ssm_parameter.loopproof_external_ids.arn
 }

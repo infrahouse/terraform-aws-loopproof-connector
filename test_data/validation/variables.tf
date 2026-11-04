@@ -40,3 +40,9 @@ variable "excluded_accounts" {
   type    = list(string)
   default = null
 }
+
+# Any shape, so that the validation tests can pass rules the module's type refuses.
+variable "accept_rules" {
+  type    = any
+  default = null
+}

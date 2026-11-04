@@ -11,4 +11,5 @@ module "connector" {
   registration_url                 = var.registration_url
   severities                       = var.severities
   excluded_accounts                = var.excluded_accounts
+  accept_rules                     = var.accept_rules
 }
