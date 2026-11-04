@@ -41,6 +41,8 @@ RULE_NAME = f"loopproof-{TEST_ENVIRONMENT}-findings"
 EXCLUDED_ACCOUNTS_PARAMETER = f"/loopproof/{TEST_ENVIRONMENT}/excluded-accounts"
 # Where the module publishes accept_rules, one parameter per rule, named by its id.
 ACCEPT_RULES_PATH = f"/loopproof/{TEST_ENVIRONMENT}/accept-rules"
+# What a Standard parameter's value holds, in characters as SSM counts them (ssm_length).
+STANDARD_PARAMETER_LIMIT = 4096
 # Part 1 of the install, which test_data/connector creates as the README tells a tenant to.
 EXTERNAL_IDS_PARAMETER = f"/loopproof/{TEST_ENVIRONMENT}/external-ids"
 REGISTRATION_TOKEN_PARAMETER = f"/loopproof/{TEST_ENVIRONMENT}/registration-token"
@@ -322,6 +324,30 @@ def published_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
     if rule.get("behavioral_exception"):
         value["behavioral_exception"] = True
     return value
+
+
+def ssm_length(value: str) -> int:
+    """
+    The length of a parameter's value as SSM counts it against its tier's limit: in UTF-16 code units, so a
+    character outside the Basic Multilingual Plane, such as an emoji, counts twice, and a combining mark
+    counts on its own. In the test account on 2026-11-04, a Standard parameter took 4094 letters and an
+    emoji, and refused 4095 letters and an emoji, and 4095 letters and a q with a combining acute.
+
+    :param value: A parameter's value.
+    :return: How many characters SSM counts in it.
+    """
+    return len(value.encode("utf-16-le")) // 2
+
+
+def rule_of_length(length: int, tail: str = "") -> Dict[str, Any]:
+    """
+    :param length: How many characters, as SSM counts them, the rule's published value should have.
+    :param tail: What the rule's reason ends with, after the letters that make up the length.
+    :return: A valid rule whose published value has exactly that many, by the length of its reason.
+    """
+    base = {**VULN_PACKAGE_RULE, "id": "long-reason", "reason": tail}
+    filler = length - ssm_length(terraform_json(published_rule(base)))
+    return {**base, "reason": "x" * filler + tail}
 
 
 def accept_rules_by_path(ssm_client: Any) -> Dict[str, Dict[str, Any]]:

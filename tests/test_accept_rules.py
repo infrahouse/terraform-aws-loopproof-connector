@@ -1,8 +1,8 @@
 """
-An install with accept rules, one of each shape: the module publishes each rule as its own SSM parameter
-under /loopproof/<environment>/accept-rules, and the connector role reads them by path, as LoopProof will,
-and nothing else new. The tests share one deployment and don't change it; test_accept_rules_change.py
-changes the rules.
+An install with accept rules, one of each shape and one as long as a Standard parameter holds: the module
+publishes each rule as its own SSM parameter under /loopproof/<environment>/accept-rules, and the connector
+role reads them by path, as LoopProof will, and nothing else new. The tests share one deployment and don't
+change it; test_accept_rules_change.py changes the rules.
 """
 
 import json
@@ -18,6 +18,7 @@ from tests.conftest import (
     EXCEPTION_RULE,
     EXCLUDED_ACCOUNTS_PARAMETER,
     EXTERNAL_IDS_PARAMETER,
+    STANDARD_PARAMETER_LIMIT,
     TEST_ENVIRONMENT,
     THREAT_RULE,
     VULN_CVE_RULE,
@@ -32,6 +33,8 @@ from tests.conftest import (
     policy_statements,
     published_rule,
     registration_server_running,
+    rule_of_length,
+    ssm_length,
     terraform,
     terraform_json,
     wait_for,
@@ -43,7 +46,11 @@ pytestmark = pytest.mark.parametrize(
     "aws_provider_version", ["~> 6.0"], ids=["aws-6"], scope="module"
 )
 
-RULES = [THREAT_RULE, VULN_CVE_RULE, VULN_PACKAGE_RULE, EXCEPTION_RULE]
+# As long as a Standard parameter holds, as SSM counts: the q's combining acute counts on its own, and
+# the emoji twice. The plan's check counts the same way, so it neither refuses this rule nor lets a longer
+# one reach SSM.
+FULL_RULE = rule_of_length(STANDARD_PARAMETER_LIMIT, tail="q\u0301\U0001f600")
+RULES = [THREAT_RULE, VULN_CVE_RULE, VULN_PACKAGE_RULE, EXCEPTION_RULE, FULL_RULE]
 
 
 def parameter_name(rule: Dict[str, Any]) -> str:
@@ -111,6 +118,10 @@ def test_one_parameter_per_rule(connector, ssm_client):
         parameter = parameters[parameter_name(rule)]
         assert parameter["Type"] == "String"
         assert parameter["Value"] == terraform_json(published_rule(rule)), rule["id"]
+    assert (
+        ssm_length(parameters[parameter_name(FULL_RULE)]["Value"])
+        == STANDARD_PARAMETER_LIMIT
+    )
 
     described = ssm_client.describe_parameters(
         ParameterFilters=[{"Key": "Path", "Values": [ACCEPT_RULES_PATH]}]

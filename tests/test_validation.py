@@ -13,15 +13,15 @@ import pytest
 from tests.conftest import (
     EXCEPTION_RULE,
     PLACEHOLDER,
+    STANDARD_PARAMETER_LIMIT,
     THREAT_RULE,
     VALIDATION_ROOT,
     new_external_id,
     new_registration_token,
     printed,
-    published_rule,
+    rule_of_length,
     terraform,
     terraform_check,
-    terraform_json,
     VULN_CVE_RULE,
     VULN_PACKAGE_RULE,
     write_terraform_tf,
@@ -198,8 +198,10 @@ WHERE_VALUES_MESSAGE = "accept_rules: where's resource_ids, image_repositories a
 THREAT_OTHER_MESSAGE = "accept_rules: a threat_response rule must not name cves, a package or image_repositories"
 VULN_OTHER_MESSAGE = "accept_rules: a vuln_remediation rule must not name finding_types or be a behavioral_exception"
 SIZE_MESSAGE = "accept_rules: a rule must fit in 4096 characters as JSON"
-# What a Standard SSM parameter holds.
-STANDARD_PARAMETER_LIMIT = 4096
+# Characters SSM counts twice, or on their own: an emoji, outside the Basic Multilingual Plane, and a q
+# with a combining acute, which has no precomposed form, so Terraform's normalization leaves it two.
+EMOJI = "\U0001f600"
+COMBINING = "q\u0301"
 # Drops a field from a rule.
 MISSING = object()
 
@@ -217,15 +219,6 @@ def rule(base: Dict[str, Any] = None, **changes: Any) -> Dict[str, Any]:
         else:
             changed[field] = value
     return changed
-
-
-def rule_of_length(length: int) -> Dict[str, Any]:
-    """
-    :param length: How many characters the rule's published value should have.
-    :return: A valid rule whose published value has exactly that many, by the length of its reason.
-    """
-    base = rule(VULN_PACKAGE_RULE, id="long-reason", reason="")
-    return rule(base, reason="x" * (length - len(terraform_json(published_rule(base)))))
 
 
 # Each case: the rules, the message, and the ids it should name; None when Terraform's own type check
@@ -452,6 +445,19 @@ ACCEPT_RULES_CASES = [
         SIZE_MESSAGE,
         ["long-reason"],
     ),
+    # SSM counts UTF-16 code units: Terraform's length() counts each of these rules as 4096 characters.
+    (
+        "over-a-standard-parameter-by-an-emoji",
+        [rule_of_length(STANDARD_PARAMETER_LIMIT + 1, tail=EMOJI)],
+        SIZE_MESSAGE,
+        ["long-reason"],
+    ),
+    (
+        "over-a-standard-parameter-by-a-combining-mark",
+        [rule_of_length(STANDARD_PARAMETER_LIMIT + 1, tail=COMBINING)],
+        SIZE_MESSAGE,
+        ["long-reason"],
+    ),
     # Terraform's type check: its message names the input, and the rule by its place in the list.
     (
         "finding-types-not-a-list",
@@ -653,6 +659,10 @@ def validation_root(aws_provider_version):
             {"accept_rules": [rule_of_length(STANDARD_PARAMETER_LIMIT)]},
             [EXTERNAL_ID],
         ),
+        (
+            {"accept_rules": [rule_of_length(STANDARD_PARAMETER_LIMIT, tail=EMOJI)]},
+            [EXTERNAL_ID],
+        ),
     ],
     ids=[
         "defaults",
@@ -671,6 +681,7 @@ def validation_root(aws_provider_version):
         "accept-rules-each-kind",
         "accept-rules-limits",
         "accept-rules-standard-parameter-full",
+        "accept-rules-standard-parameter-full-emoji",
     ],
 )
 def test_valid_inputs(
