@@ -50,4 +50,7 @@ module "loopproof_connector" {
 
   # Accounts whose findings stay here; the next apply takes a change in.
   excluded_accounts = var.excluded_accounts
+
+  # The risks you accept, each with its register entry in Linear; LoopProof reads them within 15 minutes.
+  accept_rules = var.accept_rules
 }
