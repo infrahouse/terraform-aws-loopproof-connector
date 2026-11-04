@@ -410,6 +410,7 @@ No modules.
 
 | Name | Description |
 |------|-------------|
+| <a name="output_accept_rules_parameter_path"></a> [accept\_rules\_parameter\_path](#output\_accept\_rules\_parameter\_path) | Path of the SSM parameters that publish accept\_rules to LoopProof, /loopproof/<environment>/accept-rules: one<br/>String parameter per rule, named by its id. |
 | <a name="output_event_rule_arn"></a> [event\_rule\_arn](#output\_event\_rule\_arn) | ARN of the EventBridge rule that forwards Security Hub findings to LoopProof. |
 | <a name="output_excluded_accounts_parameter"></a> [excluded\_accounts\_parameter](#output\_excluded\_accounts\_parameter) | Name of the SSM parameter that publishes excluded\_accounts to LoopProof, /loopproof/<environment>/excluded-accounts. |
 | <a name="output_region"></a> [region](#output\_region) | Region the module is applied in, where LoopProof reads the Security Hub findings. Before LoopProof has proven<br/>your account, paste it into LoopProof's onboarding with role\_arn if the registration call can't succeed. |
