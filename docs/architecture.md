@@ -9,6 +9,7 @@ flowchart LR
         FWD["Role loopproof-&lt;env&gt;-forwarder"]
         CONN["Role loopproof-&lt;env&gt;-connector"]
         PARAM["SSM parameter /loopproof/&lt;env&gt;/excluded-accounts"]
+        RULES["SSM parameters /loopproof/&lt;env&gt;/accept-rules/*"]
         CREDS["SSM parameters: ExternalIds, registration token"]
         ECR["ECR repositories, every Region"]
         AGG["Config aggregators, such as Control Tower's"]
@@ -25,6 +26,7 @@ flowchart LR
     CPR -- "sts:AssumeRole + ExternalId" --> CONN
     CONN -- "GetFindingsV2, BatchUpdateFindingsV2" --> SH
     CONN -- "GetParameter" --> PARAM
+    CONN -- "GetParametersByPath" --> RULES
     CONN -- "ListTagsForResource" --> ECR
     CONN -- "SelectAggregateResourceConfig" --> AGG
     TF -- "reads" --> CREDS
@@ -51,9 +53,10 @@ Its inline policy `security-hub-findings`:
 | `DenyUpdatesWithoutStatusOrComment` | Deny | same | If it sets no `StatusId` and no `Comment` |
 
 Its inline policy `excluded-accounts-parameter` allows `ssm:GetParameter` on the
-[excluded accounts' parameter](#excluded-accounts) alone, and its policies `ecr-repository-tags` and
-`config-aggregator-query` read [resource tags](#resource-tags); the second can read more than tags. The role's
-description names all of them.
+[excluded accounts' parameter](#excluded-accounts) alone, `accept-rules-parameters` reads the
+[accept rules](#accept-rules), and its policies `ecr-repository-tags` and `config-aggregator-query` read
+[resource tags](#resource-tags); the second can read more than tags. The role's description names the Security Hub
+and tag reads.
 
 The Security Hub v2 APIs have no IAM actions of their own: `GetFindingsV2` uses `securityhub:GetFindings`, and
 `BatchUpdateFindingsV2` uses `securityhub:BatchUpdateFindings`
@@ -196,6 +199,28 @@ nothing from one too old to say. LoopProof reads it with the connector role when
 after: the registration token works only until then, and the list may change later. It's a standard parameter, not a
 `SecureString`, so it isn't encrypted with a KMS key and reading it needs no KMS permission
 ([Parameter Store and KMS](https://docs.aws.amazon.com/kms/latest/developerguide/services-parameter-store.html)).
+
+## Accept rules
+
+Each rule in `accept_rules` is its own `String` parameter, `/loopproof/<environment>/accept-rules/<id>`, in the
+module's Region. Its value is the rule as JSON, with its fields sorted by name, as `jsonencode` writes an object, its
+lists sorted, and the fields it doesn't set left out, such as another kind's, an empty list or a false
+`behavioral_exception`, so the same rule always publishes the same bytes:
+
+```json
+{"decision_ref":"SEC-42","finding_types":["Recon:EC2/PortProbeUnprotectedPort"],"id":"vpn-port-probes","kind":"threat_response","reason":"VPN endpoints are public by design","review_by":"2027-03-31","where":{"accounts":["111122223333"],"tags":{"role":"vpn"}}}
+```
+
+One parameter per rule keeps each within a Standard parameter's 4096 characters, and the module refuses a larger
+rule at plan, naming it. With no rule there is no parameter.
+
+The connector role's policy `accept-rules-parameters` allows `ssm:GetParametersByPath` on the path, and
+`ssm:GetParameter` and `ssm:GetParameters` on `<path>/*`: the parameters under it, and not a path that only starts
+like it, such as `accept-rules-old`. Whoever may read a path with `GetParametersByPath` may read every parameter under
+it ([Parameter Store access](https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-access.html)),
+so nothing above the path is granted. The policy is there with no rule: LoopProof's read by path then returns none,
+while a connector too old to have the policy refuses it, so LoopProof can tell the two apart. The rules are `String`
+parameters, which need no KMS permission.
 
 ## The parameters
 

@@ -89,6 +89,48 @@ module "loopproof_connector" {
 The next apply updates the forwarding rule and the parameter `/loopproof/<environment>/excluded-accounts`, which
 LoopProof reads. Set `excluded_accounts = []`, or remove it, to include the account again.
 
+## Accept a risk
+
+Accept port probes on your VPN endpoints, which are public by design, once its register entry, `SEC-42`, is in your
+Linear's "LoopProof risk register" project:
+
+```hcl
+module "loopproof_connector" {
+  # ...
+  accept_rules = [
+    {
+      id            = "vpn-port-probes"
+      kind          = "threat_response"
+      finding_types = ["Recon:EC2/PortProbeUnprotectedPort"]
+      where = {
+        tags     = { role = "vpn" }
+        accounts = ["111122223333"]
+      }
+      reason       = "VPN endpoints are public by design"
+      review_by    = "2027-03-31"
+      decision_ref = "SEC-42"
+    },
+  ]
+}
+```
+
+A vulnerability you accept names its CVEs, or a source package and its version, and where it applies:
+
+```hcl
+    {
+      id           = "legacy-glibc"
+      kind         = "vuln_remediation"
+      package      = { name = "glibc", version = "2.26-64.amzn2.0.1" }
+      where        = { resource_ids = ["i-0123456789abcdef0"] }
+      reason       = "The instance is retired in January"
+      review_by    = "2027-01-31"
+      decision_ref = "OPS-7"
+    },
+```
+
+The next apply publishes each rule in `/loopproof/<environment>/accept-rules/<id>`, and LoopProof reads them within 15
+minutes, or at once from its Settings page. To renew a rule, change its `review_by`; to stop it, remove it.
+
 ## Rotating the ExternalId
 
 The Terraform doesn't change; the parameter does.
