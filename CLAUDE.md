@@ -36,8 +36,16 @@ It creates:
   `event_bus_arn` through `loopproof-<environment>-forwarder`, which may only `events:PutEvents` there;
 - `/loopproof/<environment>/excluded-accounts`: a standard `String` SSM parameter, always created, holding
   `excluded_accounts` sorted as JSON (`[]` when empty), which the connector role may `ssm:GetParameter` (its policy
-  `excluded-accounts-parameter`) and nothing else in SSM. LoopProof reads it at onboarding and daily; a
-  registration token sets the role only while the tenant is provisional, and the list changes after that;
+  `excluded-accounts-parameter`) and nothing else in SSM but the accept rules, below. LoopProof reads it at
+  onboarding and daily; a registration token sets the role only while the tenant is provisional, and the list changes
+  after that;
+- `/loopproof/<environment>/accept-rules/<id>`: one standard `String` SSM parameter per rule in `accept_rules`, none
+  without a rule, holding the rule as JSON (IH-60). The connector role may `ssm:GetParametersByPath` on the path and
+  `ssm:GetParameter` and `ssm:GetParameters` on `<path>/*` (its policy `accept-rules-parameters`), even with no rule:
+  LoopProof reads them every 15 minutes, and an older connector's role refuses the read, which tells it "no rules"
+  from "too old to have them". The module checks each rule's shape at plan; what a rule means, the behavioral
+  denylist, an exception rule's limits and the register entry in Linear, is LoopProof's to judge when it loads it,
+  so none of that is copied here;
 - `terraform_data.registration`, keyed on the role's ARN, whose `local-exec` runs `/bin/sh files/register.sh` once,
   when the resource is created: on the apply that creates the role, when the role is replaced, and with
   `terraform apply -replace`. The script POSTs `{"role_arn": ..., "region": ...}` to `registration_url` with `curl`,
@@ -61,8 +69,9 @@ both reads wait for the parameters, and the run stops at the placeholder: apply,
 
 LoopProof's onboarding generates the module call, so the variable names (`environment`,
 `control_plane_account_id`, `external_ids_parameter_arn`, `registration_token_parameter_arn`, `event_bus_arn`,
-`registration_url`, `severities`, `excluded_accounts`) and outputs (`role_arn`, `region`, `role_name`,
-`event_rule_arn`, `excluded_accounts_parameter`) are a contract. Don't rename them without a major version. So are:
+`registration_url`, `severities`, `excluded_accounts`, `accept_rules`) and outputs (`role_arn`, `region`, `role_name`,
+`event_rule_arn`, `excluded_accounts_parameter`, `accept_rules_parameter_path`) are a contract. Don't rename them
+without a major version. So are:
 
 - the registration request body's fields, `role_arn` and `region`, which LoopProof's `POST /connector/registrations`
   reads, and the token in `Authorization: Bearer`;
@@ -70,6 +79,14 @@ LoopProof's onboarding generates the module call, so the variable names (`enviro
   parameters hold until the tenant fills them, which LoopProof's generated Part 1 creates;
 - the excluded accounts' parameter, its name and its value, a JSON list of account IDs, which LoopProof reads with
   the connector role;
+- the accept rules' parameters, which LoopProof reads by path with the connector role: the path
+  `/loopproof/<environment>/accept-rules`, each parameter named by its rule's id under it, and its value, the rule as
+  JSON with the fields `id`, `kind`, `reason`, `review_by`, `decision_ref`, `finding_types`, `cves`, `package`
+  (`name`, `version`), `where` (`resource_ids`, `tags`, `image_repositories`, `accounts`) and `behavioral_exception`,
+  as `jsonencode` writes them: keys sorted, lists sorted, and an unset field, an empty list or map, or a false
+  `behavioral_exception` left out, so the same rule is always the same bytes (`published_rule()` in
+  `tests/conftest.py`). LoopProof numbers a rule's versions by its content; a change to the encoding would make every
+  tenant's rules a new version;
 - the reads LoopProof calls with the connector role: `ListTagsForResource` on a repository's ARN, and
   `SelectAggregateResourceConfig` with the aggregator's name, `aws-controltower-GuardrailsComplianceAggregator`.
 
@@ -132,13 +149,15 @@ Tower's, the tests would take it over and then delete it.
 | `tests/test_registration_refused.py` | A 401 on the first registration, its message, the tainted retry |
 | `tests/test_registration.py` | No later call; `-replace`; a replaced role; retries; 4xx; no `curl` |
 | `tests/test_register_script.py` | `files/register.sh` with a stand-in `curl`: token on stdin only (no AWS) |
-| `tests/test_module.py` | Install, outputs, ExternalId exposure, trust, permissions, tag reads, forwarding, `[]` |
+| `tests/test_module.py` | Install, outputs, ExternalId exposure, trust, permissions, tags, forwarding, `[]`, no rule |
 | `tests/test_excluded_accounts.py` | Two accounts excluded: pattern, matching, parameter, plan, reordering |
 | `tests/test_excluded_accounts_change.py` | `[]` → `[account]` → `[]`, each in place, then an empty plan |
+| `tests/test_accept_rules.py` | A rule of each shape: a parameter each, exact bytes, plan, rewriting, the role's read |
+| `tests/test_accept_rules_change.py` | A rule changed, one added, one removed, each in place, then an empty plan |
 | `tests/test_forwarding_pattern.py` | The rule alone, planned: default and widened `severities`, exclusions or not |
 | `tests/test_rotation.py` | The parameter `[old]` → `[old, new]` → `[new]` without a failed AssumeRole |
-| `tests/test_upgrade.py` | 1.1.0 from the registry, then this checkout: the rule's pattern and description change |
-| `tests/test_validation.py` | Inputs and the ExternalIds parameter's contents, at plan |
+| `tests/test_upgrade.py` | 1.2.0 from the registry, then this checkout: only the accept rules' read is added |
+| `tests/test_validation.py` | Inputs, each accept rule's shape and the ExternalIds parameter's contents, at plan |
 
 The forwarding tests judge every pattern with EventBridge's `TestEventPattern`, never the JSON alone, for GuardDuty,
 Inspector, CSPM (`Security Hub`) and exposure (`Security Hub Exposure Detection`) findings: `finding_event` sets the
