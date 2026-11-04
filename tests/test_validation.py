@@ -763,13 +763,16 @@ def test_invalid_accept_rules(
         tfvars(aws_region, test_role_arn, parameters, accept_rules=rules),
     )
     result = terraform(validation_root, "plan", "-input=false")
-    output = result.stdout + result.stderr
 
     assert result.returncode != 0
     assert message in printed(result)
     assert "accept_rules" in printed(result)
+    # What the output holds beyond the message and the ids it names, which may hold a value by chance,
+    # such as the message's example finding type or a package's name inside a rule's id.
+    beyond = printed(result).replace(message, "")
     if rule_ids is not None:
         named = ", ".join(json.dumps(rule_id) for rule_id in rule_ids)
         assert f"{message}. Rules: {named}." in printed(result)
+        beyond = beyond.replace(f". Rules: {named}.", "")
     for value in rule_values(rules):
-        assert value not in output, value
+        assert " ".join(value.split()) not in beyond, value
