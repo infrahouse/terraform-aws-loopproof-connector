@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-11-04
+
+### Bug Fixes
+
+- Count a rule's length in UTF-16 code units, as SSM does
+
+### Documentation
+
+- Accepting risks in the README: what a rule holds, its register entry, when LoopProof reads it, what it refuses (IH-60)
+- Accept_rules in the configuration, architecture, security, examples, troubleshooting and upgrading pages (IH-60)
+- The example passes accept_rules through and outputs the rules' path (IH-60)
+- CLAUDE.md's contract holds accept_rules, its output and the parameters' path, name and value (IH-60)
+- Say how the 4096 characters are counted
+- The two inputs in the README, CLAUDE.md, docs and the example
+- README's provider range again, and lines within 120 characters
+
+### Features
+
+- Add accept_rules, each rule's shape checked at plan, naming the input and the rule's id (IH-60)
+- Publish each accept rule as its own String parameter under /loopproof/<environment>/accept-rules (IH-60)
+- The connector role may read the accept rules by path and by name, and nothing else new (IH-60)
+- Add the accept_rules_parameter_path output (IH-60)
+- One input per kind, threat_accept_rules and vulnerability_accept_rules
+
+### Testing
+
+- Pass accept_rules through the test roots, with sample rules and the published value's contract (IH-60)
+- A rule of the wrong shape fails the plan, naming accept_rules and the rule's id only (IH-60)
+- Each rule is its own parameter, the same bytes every time, read by path as the connector role (IH-60)
+- With no rule nothing is published and the read returns none; the upgrade from 1.2.0 adds only the read (IH-60)
+- The leak check ignores what the message and the named ids hold by chance (IH-60)
+- Count a rule's length as SSM does
+- The leak check reads the diagnostics alone
+- One input per kind, threat_accept_rules and vulnerability_accept_rules
+
 ## [1.2.0] - 2026-10-28
 
 ### Documentation
