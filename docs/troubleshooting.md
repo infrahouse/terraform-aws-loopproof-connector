@@ -93,9 +93,9 @@ The module reads both parameters on every plan. Check that they still exist, in 
 provider, and that your credentials allow `ssm:GetParameter` on them, and `kms:Decrypt` with a customer-managed key;
 see [Security](security.md#permissions-for-whoever-applies-it).
 
-## The plan fails with "accept_rules: …"
+## The plan fails with "threat_accept_rules: …" or "vulnerability_accept_rules: …"
 
-A rule in `accept_rules` has the wrong shape; the message says what, and ends with the ids of the rules it refuses.
+A rule in that input has the wrong shape; the message says what, and ends with the ids of the rules it refuses.
 Fix those rules and plan again: nothing is published until the plan passes. "a rule must fit in 4096 characters as
 JSON" means a rule is larger than a Standard SSM parameter holds; split it into narrower rules. The module counts
 characters as SSM does, in UTF-16 code units, so an emoji counts twice and a combining accent on its own: a rule that
@@ -103,9 +103,9 @@ looks shorter than 4096 characters can still be refused.
 
 ## A rule's field is missing from its parameter
 
-Terraform drops an attribute the module's type doesn't name without an error, so a misspelled field, such as
-`acounts` or `finding_type`, never reaches the rule. Compare the field names with
-[Configuration](configuration.md#accept_rules), and read the parameter's value in the plan.
+Terraform drops an attribute the input's type doesn't name without an error, so a misspelled field, such as
+`acounts` or `finding_type`, never reaches the rule, and nor does a field of the other kind, such as `cves` in a
+threat rule. Compare the field names with [Configuration](configuration.md#threat_accept_rules-and-vulnerability_accept_rules), and read the parameter's value in the plan.
 
 ## LoopProof can't derive the tags of another account's resources
 

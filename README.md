@@ -50,8 +50,8 @@ permissions, a long-lived ExternalId in a tfvars file, and an ARN pasted into a 
   bus in another account and Region
 * Account exclusion: the findings of the accounts in `excluded_accounts` never leave your account, and the list is
   published in SSM for LoopProof to read
-* Accept rules: the risks you accept, written in `accept_rules` and changed by pull request in your repository, each
-  published in SSM for LoopProof to read and never to write
+* Accept rules: the risks you accept, written in `threat_accept_rules` and `vulnerability_accept_rules` and changed by
+  pull request in your repository, each published in SSM for LoopProof to read and never to write
 * Forwarder role that may only `events:PutEvents` on LoopProof's bus
 * The ExternalIds read from an SSM parameter, checked before use; the registration token read as an ephemeral value
 * Self-registration once, at apply, with `curl`, retried on connection errors and 5xx answers only
@@ -282,18 +282,18 @@ module "loopproof_connector" {
 
 ### Accepting risks
 
-A risk you accept, such as port probes on a VPN endpoint that is public by design, is an accept rule in
-`accept_rules`. LoopProof suppresses the findings a rule matches, citing the rule, its version and its register entry,
-instead of filing them as work. The rule lives in your Terraform, so you add, change or remove it by pull request in
-your repository, with your own review. LoopProof reads it and never writes it.
+A risk you accept, such as port probes on a VPN endpoint that is public by design, is an accept rule: a threat in
+`threat_accept_rules`, a vulnerability in `vulnerability_accept_rules`. LoopProof suppresses the findings a rule
+matches, citing the rule, its version and its register entry, instead of filing them as work. The rule lives in your
+Terraform, so you add, change or remove it by pull request in your repository, with your own review. LoopProof reads
+it and never writes it.
 
 ```hcl
 module "loopproof_connector" {
   # ...
-  accept_rules = [
+  threat_accept_rules = [
     {
       id            = "vpn-port-probes"
-      kind          = "threat_response"
       finding_types = ["Recon:EC2/PortProbeUnprotectedPort"]
       where = {
         tags     = { role = "vpn" }
@@ -303,9 +303,10 @@ module "loopproof_connector" {
       review_by    = "2027-03-31"
       decision_ref = "SEC-42" # its register entry
     },
+  ]
+  vulnerability_accept_rules = [
     {
       id   = "openssl-unreachable"
-      kind = "vuln_remediation"
       cves = ["CVE-2024-12797"]
       where = {
         image_repositories = ["batch-worker"]
@@ -320,42 +321,47 @@ module "loopproof_connector" {
 
 A rule has:
 
-* `id`: 1 to 64 lowercase letters, digits or hyphens, starting with a letter or digit, and no other rule's;
-* `kind`: `threat_response`, for GuardDuty's threats, or `vuln_remediation`, for vulnerabilities;
+* `id`: 1 to 64 lowercase letters, digits or hyphens, starting with a letter or digit, and no other rule's, in
+  either input;
 * `reason`, and `review_by`, a date (`YYYY-MM-DD`), after which the rule stops applying unless a change renews it;
 * `decision_ref`: its register entry's Linear issue identifier, such as `SEC-42`;
-* **what** it accepts, each value in full, with no prefix or wildcard: for a `threat_response` rule, GuardDuty's
-  `finding_types`; for a `vuln_remediation` rule, `cves`, or a source `package`'s `name` and `version`;
-* **where** it applies: in `where`, at least one of `resource_ids`, `tags` and, for a `vuln_remediation` rule,
+* **what** it accepts, each value in full, with no prefix or wildcard, and none listed twice: for a threat,
+  GuardDuty's `finding_types`; for a vulnerability, `cves`, or a source `package`'s `name` and `version`;
+* **where** it applies: in `where`, at least one of `resource_ids`, `tags` and, for a vulnerability,
   `image_repositories`. `accounts` narrows a rule further but never stands alone: an account alone would accept
   everything in it;
-* `behavioral_exception`: `false` unless set; see below.
+* for a threat, `behavioral_exception`: `false` unless set; see below.
+
+The input a rule is in gives its kind, which LoopProof reads as `threat_response` or `vuln_remediation`; a rule
+doesn't write it.
 
 How it works:
 
 * **Each rule needs its register entry:** an issue in your Linear workspace, in the intake team's "LoopProof risk
   register" project, and not canceled. LoopProof reads it in Linear before the rule loads.
-* **The module publishes each rule** as JSON in its own SSM `String` parameter,
+* **The module publishes each rule** of both inputs as JSON in its own SSM `String` parameter,
   `/loopproof/<environment>/accept-rules/<id>`, in the module's Region; the `accept_rules_parameter_path` output
   names the path. With no rule, there is no parameter. The connector role may read the parameters under that path,
   and nothing else new.
 * **LoopProof reads the rules within 15 minutes of the apply,** or at once when an admin of your tenant asks on its
   Settings page. It numbers a rule's versions itself, v1 and then one more for each change of its content; you write
   no version.
-* **The module checks each rule's shape at plan,** so a typo fails before anything is published; each message names
-  `accept_rules` and the rule's id. A rule must fit in a Standard parameter's 4096 characters as JSON, counted as
-  SSM counts them: an emoji counts twice, and a combining accent on its own. Split a larger rule into narrower ones.
-* **Read the published value in the plan.** Terraform drops an attribute the module's type doesn't name without an
-  error, so a rule with a misspelled field, such as `acounts`, publishes without it.
+* **The module checks each value at plan,** so a malformed one fails before anything is published: a missing field,
+  a date that isn't one, a wildcard, an id used twice. Each message names the input and the rule's id. A rule must
+  fit in a Standard parameter's 4096 characters as JSON, counted as SSM counts them: an emoji counts twice, and a
+  combining accent on its own. Split a larger rule into narrower ones.
+* **A misspelled field is not refused: read the published value in the plan.** Terraform drops an attribute the
+  input's type doesn't name without an error, so a rule with a misspelled field, such as `acounts`, publishes without
+  it. So does a field of the other kind, such as `image_repositories` in a threat rule.
 
 LoopProof judges what a rule means when it loads it, and refuses, as a load error it shows in its Settings:
 
 * an ordinary rule that accepts a threat on its behavioral denylist: a GuardDuty type whose threat purpose is
   `Backdoor`, `PrivilegeEscalation` or `CredentialAccess`, or whose family is `ReverseShell` or
   `InstanceCredentialExfiltration`;
-* an exception rule, `behavioral_exception = true`, the only kind that accepts a denylisted threat, unless it names
-  one finding type and one resource by its id, with no tags or accounts, and a `review_by` within 30 days of
-  LoopProof's first reading of it.
+* an exception rule, a threat rule with `behavioral_exception = true`, the only kind that accepts a denylisted threat,
+  unless it names one finding type and one resource by its id, with no tags or accounts, and a `review_by` at most 30
+  days after LoopProof first loads the rule.
 
 A change that fails to load leaves the rule's last good version in force; remove the rule from your Terraform to stop
 it.
@@ -395,7 +401,7 @@ your findings' history through the connector role. You don't need to debug those
 
 Change the module's version and apply. The plan adds the connector role's policy `accept-rules-parameters`, its read
 of the accept rules, which is there with no rule, and changes the role's `module_version` tag in place. Until you set
-`accept_rules` it publishes nothing; it replaces nothing, and the role doesn't register again. See
+`threat_accept_rules` or `vulnerability_accept_rules` it publishes nothing; it replaces nothing, and the role doesn't register again. See
 [Upgrading](https://infrahouse.github.io/terraform-aws-loopproof-connector/upgrading/).
 
 ### Upgrading from 1.0.1

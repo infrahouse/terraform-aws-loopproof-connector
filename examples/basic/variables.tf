@@ -32,17 +32,32 @@ variable "excluded_accounts" {
 # Any shape, so that each rule names only the fields it needs; the module checks each rule at plan. See
 # "Accepting risks" in the module's README, for example:
 #
-#   accept_rules = [{
+#   threat_accept_rules = [{
 #     id            = "vpn-port-probes"
-#     kind          = "threat_response"
 #     finding_types = ["Recon:EC2/PortProbeUnprotectedPort"]
 #     where         = { tags = { role = "vpn" } }
 #     reason        = "VPN endpoints are public by design"
 #     review_by     = "2027-03-31"
 #     decision_ref  = "SEC-42"
 #   }]
-variable "accept_rules" {
+variable "threat_accept_rules" {
   type        = any
-  description = "Your accept rules: the risks you accept, each with its register entry in Linear."
+  description = "The threats you accept, each rule with its register entry in Linear."
+  default     = []
+}
+
+# For example:
+#
+#   vulnerability_accept_rules = [{
+#     id           = "openssl-unreachable"
+#     cves         = ["CVE-2024-12797"]
+#     where        = { image_repositories = ["batch-worker"] }
+#     reason       = "The worker never opens a TLS connection"
+#     review_by    = "2027-01-15"
+#     decision_ref = "SEC-43"
+#   }]
+variable "vulnerability_accept_rules" {
+  type        = any
+  description = "The vulnerabilities you accept, each rule with its register entry in Linear."
   default     = []
 }
