@@ -123,6 +123,33 @@ resource "aws_iam_role_policy" "connector_excluded_accounts" {
   policy = data.aws_iam_policy_document.connector_excluded_accounts.json
 }
 
+# LoopProof reads the accept rules with the connector role (IH-60): all of them by path, and one or a few by
+# name. The grant is there with no rule, so that LoopProof can tell a tenant without rules, whose read returns
+# none, from a connector too old to have them, whose role refuses the read. Whoever may read a path may read
+# every parameter under it with GetParametersByPath, so it is granted on the rules' path and nothing above.
+# The rules are String parameters, whose reads need no KMS permission.
+# https://docs.aws.amazon.com/systems-manager/latest/userguide/sysman-paramstore-access.html
+data "aws_iam_policy_document" "connector_accept_rules" {
+  statement {
+    sid       = "ReadAcceptRulesByPath"
+    actions   = ["ssm:GetParametersByPath"]
+    resources = [local.accept_rules_path_arn]
+  }
+
+  # "/*", not "*": a path that only starts like the rules', such as accept-rules-old, isn't theirs.
+  statement {
+    sid       = "ReadAcceptRules"
+    actions   = ["ssm:GetParameter", "ssm:GetParameters"]
+    resources = ["${local.accept_rules_path_arn}/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "connector_accept_rules" {
+  name   = "accept-rules-parameters"
+  role   = aws_iam_role.connector.id
+  policy = data.aws_iam_policy_document.connector_accept_rules.json
+}
+
 # Resource tags. Where a finding's resource carries no tags, LoopProof derives them from a related resource:
 # an ECR image's from its repository, which neither Inspector's nor Security Hub's finding carries.
 
