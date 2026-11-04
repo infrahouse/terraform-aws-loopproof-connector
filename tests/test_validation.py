@@ -776,14 +776,17 @@ def test_invalid_accept_rules(
     result = terraform(validation_root, "plan", "-input=false")
 
     assert result.returncode != 0
-    assert message in printed(result)
-    assert "accept_rules" in printed(result)
-    # What the output holds beyond the message and the ids it names, which may hold a value by chance,
+    # The diagnostics, on stderr. stdout holds the plan of the module's other resources, which Terraform
+    # prints despite the error, and whose words, such as the event pattern's "product", may hold a value.
+    diagnostics = " ".join(result.stderr.split())
+    assert message in diagnostics
+    assert "accept_rules" in diagnostics
+    # What the diagnostics hold beyond the message and the ids it names, which may hold a value by chance,
     # such as the message's example finding type or a package's name inside a rule's id.
-    beyond = printed(result).replace(message, "")
+    beyond = diagnostics.replace(message, "")
     if rule_ids is not None:
         named = ", ".join(json.dumps(rule_id) for rule_id in rule_ids)
-        assert f"{message}. Rules: {named}." in printed(result)
+        assert f"{message}. Rules: {named}." in diagnostics
         beyond = beyond.replace(f". Rules: {named}.", "")
     for value in rule_values(rules):
         assert " ".join(value.split()) not in beyond, value
