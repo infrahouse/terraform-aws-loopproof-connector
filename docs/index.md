@@ -29,6 +29,7 @@ your Security Hub findings into Linear tickets, and nothing more:
 * Forwarding of new, updated and closed findings, GuardDuty's at every severity and the others' by OCSF severity,
   across accounts and Regions
 * Account exclusion at the edge, with the list published for LoopProof in SSM
+* Accept rules, the risks you accept, changed by pull request in your repository and published for LoopProof in SSM
 * ExternalId rotation without a failed `AssumeRole`, and without a change to your Terraform
 * One registration call, at apply, with `curl`; no call on a plan
 

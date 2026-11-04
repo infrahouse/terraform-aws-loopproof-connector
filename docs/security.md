@@ -8,9 +8,9 @@ A role of another environment, another account, or any caller without the Extern
 
 ## Permissions
 
-The role can read findings, set their status and comment, read the list of the accounts you exclude, read your ECR
-repositories' tags, and query your Config aggregators, which can return any configuration they hold, not only tags;
-nothing else:
+The role can read findings, set their status and comment, read the list of the accounts you exclude and your accept
+rules, read your ECR repositories' tags, and query your Config aggregators, which can return any configuration they
+hold, not only tags; nothing else:
 
 * `securityhub:GetFindings`, which `GetFindingsV2` requires;
 * `securityhub:BatchUpdateFindings`, which `BatchUpdateFindingsV2` requires, denied when the request sets
@@ -18,6 +18,8 @@ nothing else:
 * `ssm:GetParameter` on `/loopproof/<environment>/excluded-accounts` alone. That's a `String` parameter, which KMS
   doesn't encrypt, so the role has no KMS permission. It can't read the parameters that hold the ExternalIds and the
   token;
+* `ssm:GetParametersByPath` on `/loopproof/<environment>/accept-rules`, and `ssm:GetParameter` and
+  `ssm:GetParameters` on the parameters under it: your accept rules, `String` parameters too. It can't write them;
 * `ecr:ListTagsForResource` on the account's ECR repositories, in every Region: their tags, and nothing else of ECR,
   not their images or settings;
 * `config:SelectAggregateResourceConfig` on the account's AWS Config aggregators in the module's Region, such as AWS
@@ -59,6 +61,13 @@ can't limit `securityhub:GetFindings` to some accounts, so the connector role ca
 `GetFindingsV2`, nor the aggregator query to some accounts; LoopProof reads the list from the parameter to leave them
 out. The list itself isn't secret: the plan shows it, and anyone in your account allowed `ssm:GetParameter` on it can
 read it.
+
+## Accept rules
+
+Your accept rules live in your Terraform, so a rule changes only by pull request in your repository, with your own
+review, and an apply. LoopProof reads them with the connector role and can't write them: the role may read the
+parameters under `/loopproof/<environment>/accept-rules`, and change none. A rule isn't secret: the plan shows it, and
+anyone in your account allowed to read those parameters can read it.
 
 ## The ExternalId
 

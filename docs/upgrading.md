@@ -1,5 +1,21 @@
 # Upgrading
 
+## From 1.2.0
+
+This release adds `accept_rules`, the risks you accept, which the module publishes in SSM for LoopProof to read, and
+the connector role's read of them; see [Configuration](configuration.md#accept_rules). Without `accept_rules`, nothing
+is published. LoopProof's generated module call needs no change but its version.
+
+### Steps
+
+1. **Change the module's version** and run `terraform init`.
+2. **`terraform apply`.** The plan adds the connector role's policy `accept-rules-parameters`, which reads the
+   parameters under `/loopproof/<environment>/accept-rules`, and changes the role's `module_version` tag in place.
+
+Nothing else changes: the role's trust and its other policies, the forwarding rule and both parameters stay as they
+are, and none is replaced. The registration doesn't run again, and the registration token isn't needed. Add rules
+when you need them: each is a new parameter on the apply that adds it.
+
 ## From 1.1.0
 
 This release forwards GuardDuty's findings at every severity, whatever `severities` lists. The other products'

@@ -83,6 +83,53 @@ excluded_accounts = ["111122223333", "444455556666"]
   matter: the module sorts the list.
 * EventBridge limits a rule's pattern to 4096 characters, which holds about 250 accounts.
 
+### `accept_rules`
+
+Default `[]`. The risks you accept, each a rule with its register entry in Linear, which LoopProof applies instead of
+filing the findings it matches as work; see the [example](examples.md#accept-a-risk).
+
+```hcl
+accept_rules = [
+  {
+    id            = "vpn-port-probes"
+    kind          = "threat_response"
+    finding_types = ["Recon:EC2/PortProbeUnprotectedPort"]
+    where         = { tags = { role = "vpn" }, accounts = ["111122223333"] }
+    reason        = "VPN endpoints are public by design"
+    review_by     = "2027-03-31"
+    decision_ref  = "SEC-42"
+  },
+]
+```
+
+| Field | Required | What |
+|-------|----------|------|
+| `id` | yes | 1 to 64 lowercase letters, digits or hyphens, starting with a letter or digit; no other rule's |
+| `kind` | yes | `threat_response` or `vuln_remediation` |
+| `reason` | yes | Why the risk is accepted; not blank |
+| `review_by` | yes | A date, `YYYY-MM-DD`, after which the rule stops applying unless a change renews it |
+| `decision_ref` | yes | The register entry's Linear issue identifier, such as `SEC-42` |
+| `finding_types` | `threat_response` | GuardDuty's finding types, each in full, such as `Recon:EC2/PortProbeUnprotectedPort` |
+| `cves` | `vuln_remediation`, or `package` | CVE identifiers, such as `CVE-2024-12797` |
+| `package` | `vuln_remediation`, or `cves` | A source package's `name` and `version`, each in full |
+| `where.resource_ids` | one of three | Resources by their ids |
+| `where.tags` | one of three | Resources by their tags, a map |
+| `where.image_repositories` | one of three, `vuln_remediation` only | Container images by their repositories |
+| `where.accounts` | no | 12-digit account IDs, which narrow the three above and never stand alone |
+| `behavioral_exception` | no | `false` unless set; only a `threat_response` rule may set it |
+
+* The module checks each rule's shape at plan: the fields above, an id used twice, what and where for the rule's
+  kind, and no field another kind uses. Each message names `accept_rules` and the ids of the rules it refuses, and no
+  other value of theirs. Terraform drops an attribute the type doesn't name without an error, so a misspelled field
+  is missing from the rule's published value, which the plan shows.
+* The module publishes each rule as JSON in the `String` parameter `/loopproof/<environment>/accept-rules/<id>`, in
+  the module's Region, with its fields sorted by name, its lists sorted, and the fields it doesn't set left out, so
+  the same rule always publishes the same bytes. Reordering rules, fields or lists plans no change. A rule must fit
+  in a Standard parameter's 4096 characters as JSON.
+* LoopProof judges what a rule means when it loads it: the register entry in Linear, the behavioral denylist and an
+  exception rule's limits. See [Accepting risks](https://github.com/infrahouse/terraform-aws-loopproof-connector#accepting-risks)
+  in the README.
+
 ## Outputs
 
 | Output | Description |
@@ -92,6 +139,7 @@ excluded_accounts = ["111122223333", "444455556666"]
 | `role_name` | `loopproof-<environment>-connector` |
 | `event_rule_arn` | ARN of the EventBridge rule |
 | `excluded_accounts_parameter` | `/loopproof/<environment>/excluded-accounts`, which publishes `excluded_accounts` |
+| `accept_rules_parameter_path` | `/loopproof/<environment>/accept-rules`, under which each of `accept_rules` is a parameter |
 
 Before LoopProof has proven your account, you can paste `role_arn` and `region` into LoopProof's onboarding if the
 registration call failed. Once it has, LoopProof takes no paste.

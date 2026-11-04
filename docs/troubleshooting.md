@@ -93,6 +93,18 @@ The module reads both parameters on every plan. Check that they still exist, in 
 provider, and that your credentials allow `ssm:GetParameter` on them, and `kms:Decrypt` with a customer-managed key;
 see [Security](security.md#permissions-for-whoever-applies-it).
 
+## The plan fails with "accept_rules: …"
+
+A rule in `accept_rules` has the wrong shape; the message says what, and ends with the ids of the rules it refuses.
+Fix those rules and plan again: nothing is published until the plan passes. "a rule must fit in 4096 characters as
+JSON" means a rule is larger than a Standard SSM parameter holds; split it into narrower rules.
+
+## A rule's field is missing from its parameter
+
+Terraform drops an attribute the module's type doesn't name without an error, so a misspelled field, such as
+`acounts` or `finding_type`, never reaches the rule. Compare the field names with
+[Configuration](configuration.md#accept_rules), and read the parameter's value in the plan.
+
 ## LoopProof can't derive the tags of another account's resources
 
 LoopProof reads them from AWS Control Tower's Config aggregator, `aws-controltower-GuardrailsComplianceAggregator`,
