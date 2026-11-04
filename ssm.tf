@@ -21,7 +21,7 @@ resource "aws_ssm_parameter" "accept_rules" {
   for_each = local.accept_rules
 
   name        = "${local.accept_rules_parameter_path}/${each.key}"
-  description = "Accept rule ${each.key} for LoopProof ${var.environment}, from the connector's accept_rules."
+  description = "Accept rule ${each.key} for LoopProof ${var.environment}, from the connector's accept rules."
   type        = "String"
   # Without a tier, the provider uses the Region's default, which the account may have set to Advanced.
   tier = "Standard"
@@ -33,8 +33,11 @@ resource "aws_ssm_parameter" "accept_rules" {
     precondition {
       # Through the lengths, not each.value: Terraform prints the values a failed condition refers to, and the
       # message names the rule by its id alone.
-      condition     = local.accept_rule_lengths[each.key] <= 4096
-      error_message = "accept_rules: a rule must fit in 4096 characters as JSON. Rules: ${jsonencode(each.key)}."
+      condition = local.accept_rule_lengths[each.key] <= 4096
+      error_message = join("", [
+        "${local.accept_rule_inputs[each.key]}: a rule must fit in 4096 characters as JSON. ",
+        "Rules: ${jsonencode(each.key)}.",
+      ])
     }
   }
 }
