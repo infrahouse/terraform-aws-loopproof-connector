@@ -31,3 +31,11 @@ output "excluded_accounts_parameter" {
   EOT
   value       = aws_ssm_parameter.excluded_accounts.name
 }
+
+output "accept_rules_parameter_path" {
+  description = <<-EOT
+    Path of the SSM parameters that publish accept_rules to LoopProof, /loopproof/<environment>/accept-rules: one
+    String parameter per rule, named by its id.
+  EOT
+  value       = local.accept_rules_parameter_path
+}
