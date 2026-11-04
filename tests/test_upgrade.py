@@ -14,11 +14,12 @@ from typing import Any, Dict, List, Set
 import pytest
 
 from tests.conftest import (
+    CONNECTOR_POLICIES,
     ROLE_ADDRESS,
-    RULE_ADDRESS,
     RULE_NAME,
     TEST_ENVIRONMENT,
     UPGRADE_ROOT,
+    accept_rules_by_path,
     connector_applied,
     finding_event,
     forwarded,
@@ -32,24 +33,18 @@ from tests.conftest import (
 )
 
 # The release tenants run before this one.
-UPGRADE_FROM_VERSION = "1.1.0"
+UPGRADE_FROM_VERSION = "1.2.0"
 REGISTRY_SOURCE = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
 # Terraform merges an override file's module block into the root's, so this one swaps the root's source,
 # this checkout, for the release on the registry.
 OVERRIDE_FILE = osp.join(UPGRADE_ROOT, "main_override.tf")
-FORWARDER_ADDRESS = "module.connector.aws_iam_role.forwarder"
 FORWARDER_ROLE_NAME = f"loopproof-{TEST_ENVIRONMENT}-forwarder"
-# All the upgrade may create: nothing.
-ADDED: Set[str] = set()
-# What the plan updates in place, and which of their attributes: the forwarding rule's pattern, which forwards
-# GuardDuty's findings at every severity, and its description, which says so. The forwarder role's trust policy
-# names the rule's ARN, so Terraform reads it again only once the rule's update is applied, and the plan shows
-# it as known after apply; the ARN doesn't change, and the test checks the apply leaves the policy as it was.
-# At a release, the connector role's module_version tag changes too, and the test checks it apart.
-UPDATED = {
-    RULE_ADDRESS: ["description", "event_pattern"],
-    FORWARDER_ADDRESS: ["assume_role_policy"],
-}
+# All the upgrade may create: the connector role's read of the accept rules, which is there with no rule. A
+# tenant who sets no rule gets no parameter.
+ADDED: Set[str] = {"module.connector.aws_iam_role_policy.connector_accept_rules"}
+# What the plan updates in place, and which of their attributes: nothing. At a release, the connector role's
+# module_version tag changes, and the test checks it apart.
+UPDATED: Dict[str, List[str]] = {}
 
 
 def pin_previous_release() -> None:
@@ -108,11 +103,10 @@ def test_upgrade_from_previous_release(
     registration_server,
 ):
     """
-    Changing the version changes the forwarding rule's pattern and description in place, so that a Low
-    GuardDuty finding, dropped before, is forwarded after, and at a release the role's module_version tag.
-    The forwarder role's trust policy, which names the rule, is read again at apply and comes out the same.
-    It creates and replaces nothing, changes no other resource and doesn't register again, and the next
-    plan is empty.
+    Changing the version adds the connector role's read of the accept rules, and at a release changes the
+    role's module_version tag. It publishes no rule, replaces nothing, changes no other resource, leaves
+    the forwarding rule and the forwarder role's trust policy as they were and doesn't register again,
+    and the next plan is empty.
     """
     write_terraform_tf(UPGRADE_ROOT, aws_provider_version)
     write_tfvars(
@@ -138,8 +132,8 @@ def test_upgrade_from_previous_release(
             tags = {tag["Key"]: tag["Value"] for tag in role["Tags"]}
             assert tags["module_version"] == UPGRADE_FROM_VERSION
             assert len(registration_server.requests) == 1
-            # The sample is a GuardDuty finding: the previous release forwards it by severity only.
-            assert not forwarded(events_client, finding_event("Low"))
+            # The sample is a GuardDuty finding, which the previous release forwards at every severity too.
+            assert forwarded(events_client, finding_event("Low"))
             forwarder_trust = iam_client.get_role(RoleName=FORWARDER_ROLE_NAME)["Role"][
                 "AssumeRolePolicyDocument"
             ]
@@ -174,11 +168,6 @@ def test_upgrade_from_previous_release(
                     updated[address]["before"], updated[address]["after"]
                 )
                 assert changed == attributes, address
-            assert json.loads(
-                updated[RULE_ADDRESS]["after"]["event_pattern"]
-            ) == forwarding_pattern_document([])
-            # Unknown at plan, not a known new value.
-            assert updated[FORWARDER_ADDRESS]["after_unknown"].get("assume_role_policy")
             # At a release, the role's module_version tag, and nothing else of the role.
             if ROLE_ADDRESS in updated:
                 change = updated[ROLE_ADDRESS]
@@ -201,14 +190,11 @@ def test_upgrade_from_previous_release(
                 ]
                 == forwarder_trust
             )
-            assert sorted(
-                iam_client.list_role_policies(RoleName=role_name)["PolicyNames"]
-            ) == [
-                "config-aggregator-query",
-                "ecr-repository-tags",
-                "excluded-accounts-parameter",
-                "security-hub-findings",
-            ]
+            assert (
+                sorted(iam_client.list_role_policies(RoleName=role_name)["PolicyNames"])
+                == CONNECTOR_POLICIES
+            )
+            assert accept_rules_by_path(ssm_client) == {}
             result = terraform(
                 UPGRADE_ROOT, "plan", "-input=false", "-detailed-exitcode"
             )
