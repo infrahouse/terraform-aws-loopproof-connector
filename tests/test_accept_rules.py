@@ -1,7 +1,7 @@
 """
-An install with accept rules, one of each shape and one as long as a Standard parameter holds: the module
-publishes each rule as its own SSM parameter under /loopproof/<environment>/accept-rules, and the connector
-role reads them by path, as LoopProof will, and nothing else new. The tests share one deployment and don't
+An install with accept rules in both inputs, one of each shape and one as long as a Standard parameter holds:
+the module publishes each rule as its own SSM parameter under /loopproof/<environment>/accept-rules, with
+its kind, and the connector role reads them by path, as LoopProof will, and nothing else new. The tests share one deployment and don't
 change it; test_accept_rules_change.py changes the rules.
 """
 
@@ -20,8 +20,10 @@ from tests.conftest import (
     EXTERNAL_IDS_PARAMETER,
     STANDARD_PARAMETER_LIMIT,
     TEST_ENVIRONMENT,
+    THREAT_KIND,
     THREAT_RULE,
     VULN_CVE_RULE,
+    VULN_KIND,
     VULN_PACKAGE_RULE,
     ConnectorProbe,
     accept_rules_by_path,
@@ -50,7 +52,12 @@ pytestmark = pytest.mark.parametrize(
 # the emoji twice. The plan's check counts the same way, so it neither refuses this rule nor lets a longer
 # one reach SSM.
 FULL_RULE = rule_of_length(STANDARD_PARAMETER_LIMIT, tail="q\u0301\U0001f600")
-RULES = [THREAT_RULE, VULN_CVE_RULE, VULN_PACKAGE_RULE, EXCEPTION_RULE, FULL_RULE]
+THREAT_RULES = [THREAT_RULE, EXCEPTION_RULE]
+VULN_RULES = [VULN_CVE_RULE, VULN_PACKAGE_RULE, FULL_RULE]
+# Every rule, with the kind its input gives it.
+RULES = [(rule, THREAT_KIND) for rule in THREAT_RULES] + [
+    (rule, VULN_KIND) for rule in VULN_RULES
+]
 
 
 def parameter_name(rule: Dict[str, Any]) -> str:
@@ -59,6 +66,16 @@ def parameter_name(rule: Dict[str, Any]) -> str:
     :return: The name of the parameter that publishes it.
     """
     return f"{ACCEPT_RULES_PATH}/{rule['id']}"
+
+
+def expected_values() -> Dict[str, str]:
+    """
+    :return: Each rule's parameter name and the value the module must publish there, with its input's kind.
+    """
+    return {
+        parameter_name(rule): terraform_json(published_rule(rule, kind))
+        for rule, kind in RULES
+    }
 
 
 def reversed_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
@@ -86,7 +103,11 @@ def connector(
     external_id = new_external_id()
     with registration_server_running() as server:
         tfvars = connector_tfvars(
-            aws_region, test_role_arn, server.url, accept_rules=RULES
+            aws_region,
+            test_role_arn,
+            server.url,
+            threat_accept_rules=THREAT_RULES,
+            vulnerability_accept_rules=VULN_RULES,
         )
         write_terraform_tf(CONNECTOR_ROOT, aws_provider_version)
         write_tfvars(CONNECTOR_ROOT, tfvars)
@@ -107,17 +128,17 @@ def connector(
 
 def test_one_parameter_per_rule(connector, ssm_client):
     """
-    Each rule is a standard String parameter, named by its id under the path the output names, holding
-    the rule as JSON: its fields sorted by name, its lists sorted, and the same bytes every time.
+    Each rule of either input is a standard String parameter, named by its id under the path the output
+    names, holding the rule as JSON with its input's kind: its fields sorted by name, its lists sorted, and
+    the same bytes every time.
     """
     assert connector["outputs"]["accept_rules_parameter_path"] == ACCEPT_RULES_PATH
     parameters = accept_rules_by_path(ssm_client)
 
-    assert sorted(parameters) == sorted(parameter_name(rule) for rule in RULES)
-    for rule in RULES:
-        parameter = parameters[parameter_name(rule)]
-        assert parameter["Type"] == "String"
-        assert parameter["Value"] == terraform_json(published_rule(rule)), rule["id"]
+    assert sorted(parameters) == sorted(expected_values())
+    for name, value in expected_values().items():
+        assert parameters[name]["Type"] == "String"
+        assert parameters[name]["Value"] == value, name
     assert (
         ssm_length(parameters[parameter_name(FULL_RULE)]["Value"])
         == STANDARD_PARAMETER_LIMIT
@@ -134,7 +155,7 @@ def test_one_parameter_per_rule(connector, ssm_client):
 
 def test_unset_fields_left_out(connector, ssm_client):
     """
-    A rule's value holds the fields it sets and no others: no other kind's, no empty selector, and
+    A rule's value holds its input's kind, the fields it sets and no others: no empty selector, and
     behavioral_exception only where it is true.
     """
     values = {
@@ -152,6 +173,8 @@ def test_unset_fields_left_out(connector, ssm_client):
         "where",
     ]
     assert sorted(threat["where"]) == ["accounts", "tags"]
+    for rule, kind in RULES:
+        assert values[parameter_name(rule)]["kind"] == kind, rule["id"]
     assert sorted(values[parameter_name(VULN_CVE_RULE)]["where"]) == [
         "image_repositories"
     ]
@@ -161,7 +184,7 @@ def test_unset_fields_left_out(connector, ssm_client):
 
 def test_parameter_tags(connector, ssm_client):
     """The parameters carry the module's tags, as the excluded accounts' does."""
-    for rule in RULES:
+    for rule, _ in RULES:
         tags = {
             tag["Key"]: tag["Value"]
             for tag in ssm_client.list_tags_for_resource(
@@ -174,7 +197,7 @@ def test_parameter_tags(connector, ssm_client):
 
 def test_plan_shows_rules(connector):
     """The plan shows each rule it publishes: a rule is no secret, and a reviewer should see it."""
-    for rule in RULES:
+    for rule, _ in RULES:
         published = re.search(
             r'name\s+=\s+"' + re.escape(parameter_name(rule)) + '"', connector["log"]
         )
@@ -185,14 +208,19 @@ def test_plan_shows_rules(connector):
 
 def test_rules_written_another_way_change_nothing(connector):
     """
-    The same rules in another order, with their fields and their lists in another order, plan no change:
-    the module publishes the same bytes for the same rule.
+    The same rules in another order in each input, with their fields and their lists in another order,
+    plan no change: the module publishes the same bytes for the same rule.
     """
     write_tfvars(
         CONNECTOR_ROOT,
         {
             **connector["tfvars"],
-            "accept_rules": [reversed_rule(rule) for rule in reversed(RULES)],
+            "threat_accept_rules": [
+                reversed_rule(rule) for rule in reversed(THREAT_RULES)
+            ],
+            "vulnerability_accept_rules": [
+                reversed_rule(rule) for rule in reversed(VULN_RULES)
+            ],
         },
     )
     try:
@@ -261,16 +289,17 @@ def test_connector_reads_rules_by_path(connector, boto3_session, aws_region):
         return True
 
     wait_for(read_by_path, "the connector role can read the accept rules by path")
-    assert {name: parameter["Value"] for name, parameter in read[-1].items()} == {
-        parameter_name(rule): terraform_json(published_rule(rule)) for rule in RULES
-    }
+    assert {
+        name: parameter["Value"] for name, parameter in read[-1].items()
+    } == expected_values()
 
     ssm = probe.session(outputs["probe_role_arn"], connector["external_id"]).client(
         "ssm"
     )
-    names = [parameter_name(rule) for rule in RULES]
-    assert ssm.get_parameter(Name=names[0])["Parameter"]["Value"] == terraform_json(
-        published_rule(RULES[0])
+    names = sorted(expected_values())
+    assert (
+        ssm.get_parameter(Name=names[0])["Parameter"]["Value"]
+        == expected_values()[names[0]]
     )
     assert sorted(
         parameter["Name"] for parameter in ssm.get_parameters(Names=names)["Parameters"]

@@ -39,7 +39,7 @@ UPGRADE_ROOT = osp.join(TERRAFORM_ROOT_DIR, "upgrade")
 TEST_ENVIRONMENT = "pytest"
 RULE_NAME = f"loopproof-{TEST_ENVIRONMENT}-findings"
 EXCLUDED_ACCOUNTS_PARAMETER = f"/loopproof/{TEST_ENVIRONMENT}/excluded-accounts"
-# Where the module publishes accept_rules, one parameter per rule, named by its id.
+# Where the module publishes the accept rules of both inputs, one parameter per rule, named by its id.
 ACCEPT_RULES_PATH = f"/loopproof/{TEST_ENVIRONMENT}/accept-rules"
 # What a Standard parameter's value holds, in characters as SSM counts them (ssm_length).
 STANDARD_PARAMETER_LIMIT = 4096
@@ -137,11 +137,14 @@ SEVERITY_FILTERED_PRODUCTS = [
 # The module's default severities.
 DEFAULT_SEVERITIES = ["High", "Critical", "Fatal"]
 
-# One accept rule of each shape, with documentation account IDs. Their lists are out of order on purpose:
-# the module sorts them.
+# The kind the module publishes for a rule of each input.
+THREAT_KIND = "threat_response"
+VULN_KIND = "vuln_remediation"
+# One accept rule of each shape, with documentation account IDs: THREAT_RULE and EXCEPTION_RULE for
+# threat_accept_rules, VULN_CVE_RULE and VULN_PACKAGE_RULE for vulnerability_accept_rules. Their lists are out
+# of order on purpose: the module sorts them.
 THREAT_RULE = {
     "id": "vpn-port-probes",
-    "kind": "threat_response",
     "finding_types": [
         "Recon:EC2/PortProbeUnprotectedPort",
         "Recon:EC2/PortProbeEMRUnprotectedPort",
@@ -156,7 +159,6 @@ THREAT_RULE = {
 }
 VULN_CVE_RULE = {
     "id": "openssl-unreachable",
-    "kind": "vuln_remediation",
     "cves": ["CVE-2024-5535", "CVE-2024-12797"],
     "where": {"image_repositories": ["batch-worker"]},
     "reason": "The worker never opens a TLS connection",
@@ -165,7 +167,6 @@ VULN_CVE_RULE = {
 }
 VULN_PACKAGE_RULE = {
     "id": "legacy-glibc",
-    "kind": "vuln_remediation",
     "package": {"name": "glibc", "version": "2.26-64.amzn2.0.1"},
     "where": {"resource_ids": ["i-0123456789abcdef0"]},
     "reason": "The instance is retired in January",
@@ -176,7 +177,6 @@ VULN_PACKAGE_RULE = {
 # it, which LoopProof judges, not the module. The ampersand is one of the characters jsonencode escapes.
 EXCEPTION_RULE = {
     "id": "pentest-box-c2",
-    "kind": "threat_response",
     "behavioral_exception": True,
     "finding_types": ["Backdoor:EC2/C&CActivity.B!DNS"],
     "where": {
@@ -250,7 +250,8 @@ def connector_tfvars(
     test_role_arn: Optional[str],
     registration_url: str,
     excluded_accounts: Optional[List[str]] = None,
-    accept_rules: Optional[List[Dict[str, Any]]] = None,
+    threat_accept_rules: Optional[List[Dict[str, Any]]] = None,
+    vulnerability_accept_rules: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
     Build the variables of the ``connector`` test root module. The ExternalIds and the registration
@@ -260,7 +261,8 @@ def connector_tfvars(
     :param test_role_arn: Role that Terraform assumes, if any.
     :param registration_url: Where the module reports the role ARN.
     :param excluded_accounts: Accounts whose findings aren't forwarded; ``None`` for the module's default.
-    :param accept_rules: The tenant's accept rules; ``None`` for the module's default, none.
+    :param threat_accept_rules: The threats the tenant accepts; ``None`` for the module's default, none.
+    :param vulnerability_accept_rules: The vulnerabilities it accepts; ``None`` for the default, none.
     :return: Variable names and values.
     """
     return {
@@ -269,7 +271,8 @@ def connector_tfvars(
         "environment": TEST_ENVIRONMENT,
         "registration_url": registration_url,
         "excluded_accounts": excluded_accounts,
-        "accept_rules": accept_rules,
+        "threat_accept_rules": threat_accept_rules,
+        "vulnerability_accept_rules": vulnerability_accept_rules,
     }
 
 
@@ -296,19 +299,19 @@ def terraform_json(value: Any) -> str:
     return encoded
 
 
-def published_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
+def published_rule(rule: Dict[str, Any], kind: str) -> Dict[str, Any]:
     """
-    What the module publishes for a valid rule, as LoopProof reads it: every field the rule sets, its
-    lists sorted, and none it leaves unset, an empty list, an empty map or a false behavioral_exception
-    included. :func:`terraform_json` gives the bytes.
+    What the module publishes for a valid rule, as LoopProof reads it: its kind, from the input it is in,
+    every field the rule sets, its lists sorted, and none it leaves unset, an empty list, an empty map or a
+    false behavioral_exception included. :func:`terraform_json` gives the bytes.
 
-    :param rule: A rule as the tenant writes it in ``accept_rules``.
+    :param rule: A rule as the tenant writes it in ``threat_accept_rules`` or ``vulnerability_accept_rules``.
+    :param kind: :data:`THREAT_KIND` for the first input, :data:`VULN_KIND` for the second.
     :return: The rule's published value, decoded.
     """
-    value = {
-        field: rule[field]
-        for field in ["id", "kind", "reason", "review_by", "decision_ref"]
-    }
+    value = {"kind": kind}
+    for field in ["id", "reason", "review_by", "decision_ref"]:
+        value[field] = rule[field]
     for field in ["finding_types", "cves"]:
         if rule.get(field):
             value[field] = sorted(rule[field])
@@ -343,10 +346,11 @@ def rule_of_length(length: int, tail: str = "") -> Dict[str, Any]:
     """
     :param length: How many characters, as SSM counts them, the rule's published value should have.
     :param tail: What the rule's reason ends with, after the letters that make up the length.
-    :return: A valid rule whose published value has exactly that many, by the length of its reason.
+    :return: A valid rule of ``vulnerability_accept_rules`` whose published value has exactly that many, by
+        the length of its reason.
     """
     base = {**VULN_PACKAGE_RULE, "id": "long-reason", "reason": tail}
-    filler = length - ssm_length(terraform_json(published_rule(base)))
+    filler = length - ssm_length(terraform_json(published_rule(base, VULN_KIND)))
     return {**base, "reason": "x" * filler + tail}
 
 
