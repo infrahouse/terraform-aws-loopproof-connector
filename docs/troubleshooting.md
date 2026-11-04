@@ -97,7 +97,9 @@ see [Security](security.md#permissions-for-whoever-applies-it).
 
 A rule in `accept_rules` has the wrong shape; the message says what, and ends with the ids of the rules it refuses.
 Fix those rules and plan again: nothing is published until the plan passes. "a rule must fit in 4096 characters as
-JSON" means a rule is larger than a Standard SSM parameter holds; split it into narrower rules.
+JSON" means a rule is larger than a Standard SSM parameter holds; split it into narrower rules. The module counts
+characters as SSM does, in UTF-16 code units, so an emoji counts twice and a combining accent on its own: a rule that
+looks shorter than 4096 characters can still be refused.
 
 ## A rule's field is missing from its parameter
 

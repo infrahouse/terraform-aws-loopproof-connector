@@ -212,7 +212,8 @@ lists sorted, and the fields it doesn't set left out, such as another kind's, an
 ```
 
 One parameter per rule keeps each within a Standard parameter's 4096 characters, and the module refuses a larger
-rule at plan, naming it. With no rule there is no parameter.
+rule at plan, naming it. It counts as SSM does, in UTF-16 code units, where Terraform's `length()` counts what a reader
+sees as one character: an emoji is one for Terraform and two for SSM. With no rule there is no parameter.
 
 The connector role's policy `accept-rules-parameters` allows `ssm:GetParametersByPath` on the path, and
 `ssm:GetParameter` and `ssm:GetParameters` on `<path>/*`: the parameters under it, and not a path that only starts
