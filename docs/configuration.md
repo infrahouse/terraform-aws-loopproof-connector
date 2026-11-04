@@ -125,7 +125,8 @@ accept_rules = [
 * The module publishes each rule as JSON in the `String` parameter `/loopproof/<environment>/accept-rules/<id>`, in
   the module's Region, with its fields sorted by name, its lists sorted, and the fields it doesn't set left out, so
   the same rule always publishes the same bytes. Reordering rules, fields or lists plans no change. A rule must fit
-  in a Standard parameter's 4096 characters as JSON.
+  in a Standard parameter's 4096 characters as JSON, as SSM counts them: an emoji counts twice, and a combining
+  accent on its own.
 * LoopProof judges what a rule means when it loads it: the register entry in Linear, the behavioral denylist and an
   exception rule's limits. See [Accepting risks](https://github.com/infrahouse/terraform-aws-loopproof-connector#accepting-risks)
   in the README.

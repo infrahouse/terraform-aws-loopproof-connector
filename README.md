@@ -343,8 +343,8 @@ How it works:
   Settings page. It numbers a rule's versions itself, v1 and then one more for each change of its content; you write
   no version.
 * **The module checks each rule's shape at plan,** so a typo fails before anything is published; each message names
-  `accept_rules` and the rule's id. A rule must fit in a Standard parameter's 4096 characters as JSON; split a larger
-  one into narrower rules.
+  `accept_rules` and the rule's id. A rule must fit in a Standard parameter's 4096 characters as JSON, counted as
+  SSM counts them: an emoji counts twice, and a combining accent on its own. Split a larger rule into narrower ones.
 * **Read the published value in the plan.** Terraform drops an attribute the module's type doesn't name without an
   error, so a rule with a misspelled field, such as `acounts`, publishes without it.
 
