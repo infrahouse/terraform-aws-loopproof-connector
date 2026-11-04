@@ -1,7 +1,8 @@
 """
-A plain install, without excluded accounts: the resources, the outputs, the trust policy, the
-connector's permissions, among them the reads of resource tags, the forwarding rule and the excluded
-accounts' parameter. The tests share one deployment.
+A plain install, without excluded accounts or accept rules: the resources, the outputs, the trust policy,
+the connector's permissions, among them the reads of resource tags, the forwarding rule, the excluded
+accounts' parameter, and the accept rules' path, which holds no parameter and which the connector role
+reads all the same. The tests share one deployment.
 """
 
 import json
@@ -12,7 +13,9 @@ import pytest
 from botocore.exceptions import ClientError
 
 from tests.conftest import (
+    ACCEPT_RULES_PATH,
     CONNECTOR_ACTIONS,
+    CONNECTOR_POLICIES,
     CONNECTOR_ROOT,
     EXCLUDED_ACCOUNTS_PARAMETER,
     EXTERNAL_IDS_PARAMETER,
@@ -24,6 +27,7 @@ from tests.conftest import (
     SEVERITY_FILTERED_PRODUCTS,
     TEST_ENVIRONMENT,
     ConnectorProbe,
+    accept_rules_by_path,
     allowed_actions,
     as_list,
     connector_applied,
@@ -92,6 +96,7 @@ def test_install(connector, iam_client, events_client, aws_region):
     # The tenant's Region, not the control plane's bus Region.
     assert outputs["region"] == aws_region
     assert outputs["excluded_accounts_parameter"] == EXCLUDED_ACCOUNTS_PARAMETER
+    assert outputs["accept_rules_parameter_path"] == ACCEPT_RULES_PATH
 
     role = iam_client.get_role(RoleName=outputs["role_name"])["Role"]
     tags = {tag["Key"]: tag["Value"] for tag in role.get("Tags", [])}
@@ -183,17 +188,16 @@ def test_connector_trust_policy(connector, iam_client):
 def test_connector_permissions(connector, iam_client):
     """
     The connector role may only read findings and set their status and comment, read the excluded
-    accounts, read repositories' tags and query the Config aggregators.
+    accounts and the accept rules, read repositories' tags and query the Config aggregators. The accept
+    rules' read is there with no rule.
     """
     role_name = connector["outputs"]["role_name"]
     statements = inline_policy_statements(iam_client, role_name)
 
-    assert sorted(iam_client.list_role_policies(RoleName=role_name)["PolicyNames"]) == [
-        "config-aggregator-query",
-        "ecr-repository-tags",
-        "excluded-accounts-parameter",
-        "security-hub-findings",
-    ]
+    assert (
+        sorted(iam_client.list_role_policies(RoleName=role_name)["PolicyNames"])
+        == CONNECTOR_POLICIES
+    )
     assert allowed_actions(iam_client, role_name) == CONNECTOR_ACTIONS
     # No wildcard actions, and every Deny only narrows BatchUpdateFindings.
     assert not [
@@ -300,12 +304,45 @@ def test_connector_permissions_simulated(
         ("ssm:PutParameter", EXCLUDED_ACCOUNTS_PARAMETER, "implicitDeny"),
         ("ssm:DeleteParameter", EXCLUDED_ACCOUNTS_PARAMETER, "implicitDeny"),
         ("ssm:AddTagsToResource", EXCLUDED_ACCOUNTS_PARAMETER, "implicitDeny"),
+        # The accept rules: read by path, or each by name, and nothing more.
+        ("ssm:GetParametersByPath", ACCEPT_RULES_PATH, "allowed"),
+        ("ssm:GetParameter", f"{ACCEPT_RULES_PATH}/vpn-port-probes", "allowed"),
+        ("ssm:GetParameters", f"{ACCEPT_RULES_PATH}/vpn-port-probes", "allowed"),
+        ("ssm:GetParametersByPath", "/loopproof", "implicitDeny"),
+        # A path that only starts like the rules' isn't theirs.
+        ("ssm:GetParametersByPath", f"{ACCEPT_RULES_PATH}-old", "implicitDeny"),
+        (
+            "ssm:GetParameter",
+            f"{ACCEPT_RULES_PATH}-old/vpn-port-probes",
+            "implicitDeny",
+        ),
+        ("ssm:GetParameters", EXTERNAL_IDS_PARAMETER, "implicitDeny"),
+        (
+            "ssm:GetParameterHistory",
+            f"{ACCEPT_RULES_PATH}/vpn-port-probes",
+            "implicitDeny",
+        ),
+        ("ssm:PutParameter", f"{ACCEPT_RULES_PATH}/vpn-port-probes", "implicitDeny"),
+        (
+            "ssm:DeleteParameter",
+            f"{ACCEPT_RULES_PATH}/vpn-port-probes",
+            "implicitDeny",
+        ),
+        ("ssm:DeleteParameters", ACCEPT_RULES_PATH, "implicitDeny"),
+        (
+            "ssm:LabelParameterVersion",
+            f"{ACCEPT_RULES_PATH}/vpn-port-probes",
+            "implicitDeny",
+        ),
     ],
 )
 def test_connector_ssm_simulated(
     connector, iam_client, aws_region, action, name, decision
 ):
-    """In SSM, the IAM policy simulator lets the connector role only read the excluded accounts' parameter."""
+    """
+    In SSM, the IAM policy simulator lets the connector role only read the excluded accounts' parameter
+    and the accept rules.
+    """
     account_id = connector["outputs"]["event_bus_arn"].split(":")[4]
     # A hierarchical parameter's name starts with "/", which its ARN doesn't repeat.
     resource_arn = f"arn:aws:ssm:{aws_region}:{account_id}:parameter{name}"
@@ -660,6 +697,41 @@ def test_connector_reads_excluded_accounts(connector, boto3_session, aws_region)
         with pytest.raises(ClientError) as err:
             call()
         assert err.value.response["Error"]["Code"] == "AccessDeniedException"
+
+
+def test_no_accept_rules(connector, ssm_client, boto3_session, aws_region):
+    """
+    With no rule, the module publishes nothing under the accept rules' path, and the connector role's
+    read by path works and returns none: LoopProof tells "no rules" from a connector too old to have
+    them, whose role refuses the read.
+    """
+    assert accept_rules_by_path(ssm_client) == {}
+
+    outputs = connector["outputs"]
+    probe = ConnectorProbe(boto3_session, aws_region, outputs["role_arn"])
+    read: List[Dict[str, Any]] = []
+
+    def read_by_path() -> bool:
+        try:
+            read.append(
+                accept_rules_by_path(
+                    probe.session(
+                        outputs["probe_role_arn"], connector["external_id"]
+                    ).client("ssm")
+                )
+            )
+        except ClientError as err:
+            # STS answers AccessDenied, SSM AccessDeniedException, until IAM has the change.
+            if err.response["Error"]["Code"] in (
+                "AccessDenied",
+                "AccessDeniedException",
+            ):
+                return False
+            raise
+        return True
+
+    wait_for(read_by_path, "the connector role can read the accept rules by path")
+    assert read[-1] == {}
 
 
 @pytest.mark.parametrize("severity", FORWARDED + NOT_FORWARDED)
