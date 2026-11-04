@@ -202,10 +202,11 @@ after: the registration token works only until then, and the list may change lat
 
 ## Accept rules
 
-Each rule in `accept_rules` is its own `String` parameter, `/loopproof/<environment>/accept-rules/<id>`, in the
-module's Region. Its value is the rule as JSON, with its fields sorted by name, as `jsonencode` writes an object, its
-lists sorted, and the fields it doesn't set left out, such as another kind's, an empty list or a false
-`behavioral_exception`, so the same rule always publishes the same bytes:
+Each rule of `threat_accept_rules` and `vulnerability_accept_rules` is its own `String` parameter,
+`/loopproof/<environment>/accept-rules/<id>`, in the module's Region, under one path for both. Its value is the rule as
+JSON with its `kind`, which its input gives it, `threat_response` or `vuln_remediation`, its fields sorted by name, as
+`jsonencode` writes an object, its lists sorted, and the fields it doesn't set left out, such as an empty list or a
+false `behavioral_exception`, so the same rule always publishes the same bytes:
 
 ```json
 {"decision_ref":"SEC-42","finding_types":["Recon:EC2/PortProbeUnprotectedPort"],"id":"vpn-port-probes","kind":"threat_response","reason":"VPN endpoints are public by design","review_by":"2027-03-31","where":{"accounts":["111122223333"],"tags":{"role":"vpn"}}}

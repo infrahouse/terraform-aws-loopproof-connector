@@ -97,10 +97,9 @@ Linear's "LoopProof risk register" project:
 ```hcl
 module "loopproof_connector" {
   # ...
-  accept_rules = [
+  threat_accept_rules = [
     {
       id            = "vpn-port-probes"
-      kind          = "threat_response"
       finding_types = ["Recon:EC2/PortProbeUnprotectedPort"]
       where = {
         tags     = { role = "vpn" }
@@ -114,18 +113,20 @@ module "loopproof_connector" {
 }
 ```
 
-A vulnerability you accept names its CVEs, or a source package and its version, and where it applies:
+A vulnerability you accept, in `vulnerability_accept_rules`, names its CVEs, or a source package and its version, and
+where it applies:
 
 ```hcl
+  vulnerability_accept_rules = [
     {
       id           = "legacy-glibc"
-      kind         = "vuln_remediation"
       package      = { name = "glibc", version = "2.26-64.amzn2.0.1" }
       where        = { resource_ids = ["i-0123456789abcdef0"] }
       reason       = "The instance is retired in January"
       review_by    = "2027-01-31"
       decision_ref = "OPS-7"
     },
+  ]
 ```
 
 The next apply publishes each rule in `/loopproof/<environment>/accept-rules/<id>`, and LoopProof reads them within 15
