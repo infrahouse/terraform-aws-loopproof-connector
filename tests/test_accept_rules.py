@@ -1,8 +1,8 @@
 """
 An install with accept rules in both inputs, one of each shape and one as long as a Standard parameter holds:
 the module publishes each rule as its own SSM parameter under /loopproof/<environment>/accept-rules, with
-its kind, and the connector role reads them by path, as LoopProof will, and nothing else new. The tests share one deployment and don't
-change it; test_accept_rules_change.py changes the rules.
+its kind, and the connector role reads them by path, as LoopProof will, and nothing else new. The tests share
+one deployment and don't change it; test_accept_rules_change.py changes the rules.
 """
 
 import json

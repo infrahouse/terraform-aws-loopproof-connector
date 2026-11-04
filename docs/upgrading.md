@@ -3,8 +3,9 @@
 ## From 1.2.0
 
 This release adds `threat_accept_rules` and `vulnerability_accept_rules`, the risks you accept, which the module
-publishes in SSM for LoopProof to read, and the connector role's read of them; see [Configuration](configuration.md#threat_accept_rules-and-vulnerability_accept_rules). Without
-them, nothing is published. LoopProof's generated module call needs no change but its version.
+publishes in SSM for LoopProof to read, and the connector role's read of them; see
+[Configuration](configuration.md#threat_accept_rules-and-vulnerability_accept_rules). Without them, nothing is
+published. LoopProof's generated module call needs no change but its version.
 
 ### Steps
 
