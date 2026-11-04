@@ -29,12 +29,59 @@ locals {
   # Sorted, so that reordering the list changes neither the rule nor the parameter.
   excluded_accounts = sort(var.excluded_accounts)
 
-  # Each accept rule as LoopProof reads it, by id: the fields the rule sets, sorted by name, as jsonencode
-  # writes an object, with its lists sorted, so that the same rule publishes the same bytes however it is
-  # written, and the plan of a reordered list is empty. A field the rule leaves unset is left out, and so are
-  # an empty list or map and a false behavioral_exception, which say no more than an unset field.
+  # Both inputs' rules in one shape, each with the kind its input gives it, which a rule doesn't write: a
+  # threat rule has no cves, package or image_repositories, and a vulnerability rule no finding_types or
+  # behavioral_exception. The input's name is for the size check's message.
+  accept_rule_sources = concat(
+    [
+      for rule in var.threat_accept_rules : {
+        input         = "threat_accept_rules"
+        id            = rule.id
+        kind          = "threat_response"
+        reason        = rule.reason
+        review_by     = rule.review_by
+        decision_ref  = rule.decision_ref
+        finding_types = rule.finding_types
+        cves          = null
+        package       = null
+        where = rule.where == null ? null : {
+          resource_ids       = rule.where.resource_ids
+          tags               = rule.where.tags
+          image_repositories = null
+          accounts           = rule.where.accounts
+        }
+        behavioral_exception = rule.behavioral_exception
+      }
+    ],
+    [
+      for rule in var.vulnerability_accept_rules : {
+        input         = "vulnerability_accept_rules"
+        id            = rule.id
+        kind          = "vuln_remediation"
+        reason        = rule.reason
+        review_by     = rule.review_by
+        decision_ref  = rule.decision_ref
+        finding_types = null
+        cves          = rule.cves
+        package       = rule.package
+        where = rule.where == null ? null : {
+          resource_ids       = rule.where.resource_ids
+          tags               = rule.where.tags
+          image_repositories = rule.where.image_repositories
+          accounts           = rule.where.accounts
+        }
+        behavioral_exception = false
+      }
+    ],
+  )
+  accept_rule_inputs = { for rule in local.accept_rule_sources : rule.id => rule.input }
+
+  # Each accept rule as LoopProof reads it, by id: the fields the rule sets and its kind, sorted by name, as
+  # jsonencode writes an object, with its lists sorted, so that the same rule publishes the same bytes however
+  # it is written, and the plan of a reordered list is empty. A field the rule leaves unset is left out, and so
+  # are an empty list or map and a false behavioral_exception, which say no more than an unset field.
   accept_rules = {
-    for rule in var.accept_rules : rule.id => jsonencode({
+    for rule in local.accept_rule_sources : rule.id => jsonencode({
       for field, value in {
         id           = rule.id
         kind         = rule.kind
