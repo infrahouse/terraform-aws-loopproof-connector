@@ -67,8 +67,14 @@ locals {
       } : field => value if value != null
     })
   }
-  # What a Standard parameter holds is 4096 characters.
-  accept_rule_lengths = { for id, value in local.accept_rules : id => length(value) }
+  # Each rule's length as SSM counts it against a Standard parameter's 4096 characters: in UTF-16 code units, so
+  # a character outside the Basic Multilingual Plane, such as an emoji, counts twice, and a combining mark on its
+  # own. length() counts grapheme clusters, fewer, so count the code points and add the supplementary ones.
+  accept_rule_lengths = {
+    for id, value in local.accept_rules : id => (
+      length(regexall("(?s).", value)) + length(regexall("[\\x{10000}-\\x{10FFFF}]", value))
+    )
+  }
 
   # Only the control plane's own roles for this environment may assume the connector role.
   control_plane_iam_prefix   = "arn:${local.partition}:iam::${var.control_plane_account_id}"
