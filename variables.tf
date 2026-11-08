@@ -485,7 +485,7 @@ variable "vulnerability_accept_rules" {
     review_by    = optional(string)
     decision_ref = optional(string)
 
-    # What the rule accepts: cves, or a source package.
+    # What the rule accepts: cves, a package with its version, or both, the version then optional.
     cves = optional(list(string))
     package = optional(object({
       name    = optional(string)
@@ -501,11 +501,15 @@ variable "vulnerability_accept_rules" {
     }))
   }))
   description = <<-EOT
-    The vulnerabilities you accept, each rule with its register entry in Linear. The module publishes each rule
-    as JSON, with the kind vuln_remediation, in the SSM parameter /loopproof/<environment>/accept-rules/<id>,
-    where LoopProof reads it with the connector role, and checks each rule's shape at plan. LoopProof judges
-    what a rule means when it loads it, and checks its register entry. An id must not be a threat rule's too.
-    See "Accepting risks" in the README.
+    The vulnerabilities you accept, each rule with its register entry in Linear. A rule names cves, and accepts
+    them in any package; or a package with its version, and accepts every CVE in it; or both, and accepts its
+    cves in that package only, at that version if it gives one: beside cves the version is optional. The package
+    is the one LoopProof files the work under: an OS package's source package, such as openssh, never a binary
+    package such as openssh-server, or a language package by its name. The module publishes each rule as JSON,
+    with the kind vuln_remediation, in the SSM parameter /loopproof/<environment>/accept-rules/<id>, where
+    LoopProof reads it with the connector role, and checks each rule's shape at plan. LoopProof judges what a
+    rule means when it loads it, and checks its register entry. An id must not be a threat rule's too. See
+    "Accepting risks" in the README.
   EOT
   default     = []
   nullable    = false
@@ -632,17 +636,19 @@ variable "vulnerability_accept_rules" {
     ])
   }
 
+  # A rule names cves, a package, or both, and then accepts a finding only when both hold (IH-60, 2026-11-08). An
+  # empty list of cves names none.
   validation {
     condition = alltrue([
       for rule in var.vulnerability_accept_rules : rule == null ? true : !(
-        (rule.cves == null ? false : length(rule.cves) > 0) == (rule.package != null)
+        !(rule.cves == null ? false : length(rule.cves) > 0) && rule.package == null
       )
     ])
     error_message = join("", [
-      "vulnerability_accept_rules: a rule must name the cves it accepts or the package, not both. Rules: ",
+      "vulnerability_accept_rules: a rule must name the cves it accepts, a package, or both. Rules: ",
       join(", ", [
         for rule in var.vulnerability_accept_rules : jsonencode(rule.id) if rule == null ? false : (
-          (rule.cves == null ? false : length(rule.cves) > 0) == (rule.package != null)
+          !(rule.cves == null ? false : length(rule.cves) > 0) && rule.package == null
         )
       ]),
       ".",
@@ -671,24 +677,66 @@ variable "vulnerability_accept_rules" {
     ])
   }
 
-  # A source package's name and version, as the finding names them: no whitespace, no wildcard.
   validation {
     condition = alltrue([
       for rule in var.vulnerability_accept_rules : rule == null ? true : !(
-        rule.package == null ? false : !(
-          can(regex("^[^*\\s]+$", rule.package.name))
-          && can(regex("^[^*\\s]+$", rule.package.version))
+        rule.package == null ? false : rule.package.name == null
+      )
+    ])
+    error_message = join("", [
+      "vulnerability_accept_rules: a package must have its name. Rules: ",
+      join(", ", [
+        for rule in var.vulnerability_accept_rules : jsonencode(rule.id) if rule == null ? false : (
+          rule.package == null ? false : rule.package.name == null
+        )
+      ]),
+      ".",
+    ])
+  }
+
+  # A package named alone accepts every CVE in it, so it needs its version. Beside cves the version is optional:
+  # a reason such as "we don't use openssh" holds at every version, and with a version required, each update that
+  # doesn't fix the CVE would end the acceptance (IH-60, 2026-11-08).
+  validation {
+    condition = alltrue([
+      for rule in var.vulnerability_accept_rules : rule == null ? true : !(
+        rule.package == null ? false : (
+          rule.package.version == null && !(rule.cves == null ? false : length(rule.cves) > 0)
         )
       )
     ])
     error_message = join("", [
-      "vulnerability_accept_rules: a package must have a name and a version, each in full. Rules: ",
+      "vulnerability_accept_rules: a package must have its version, unless the rule names cves. Rules: ",
       join(", ", [
         for rule in var.vulnerability_accept_rules : jsonencode(rule.id) if rule == null ? false : (
-          rule.package == null ? false : !(
-            can(regex("^[^*\\s]+$", rule.package.name))
-            && can(regex("^[^*\\s]+$", rule.package.version))
+          rule.package == null ? false : (
+            rule.package.version == null && !(rule.cves == null ? false : length(rule.cves) > 0)
           )
+        )
+      ]),
+      ".",
+    ])
+  }
+
+  # The package LoopProof files the work under, by its name and the version the rule gives, as LoopProof's work
+  # grain holds them: no whitespace, no wildcard.
+  validation {
+    condition = alltrue([
+      for rule in var.vulnerability_accept_rules : rule == null ? true : !(
+        rule.package == null ? false : !alltrue([
+          rule.package.name == null ? true : can(regex("^[^*\\s]+$", rule.package.name)),
+          rule.package.version == null ? true : can(regex("^[^*\\s]+$", rule.package.version)),
+        ])
+      )
+    ])
+    error_message = join("", [
+      "vulnerability_accept_rules: a package's name and version must be in full. Rules: ",
+      join(", ", [
+        for rule in var.vulnerability_accept_rules : jsonencode(rule.id) if rule == null ? false : (
+          rule.package == null ? false : !alltrue([
+            rule.package.name == null ? true : can(regex("^[^*\\s]+$", rule.package.name)),
+            rule.package.version == null ? true : can(regex("^[^*\\s]+$", rule.package.version)),
+          ])
         )
       ]),
       ".",
