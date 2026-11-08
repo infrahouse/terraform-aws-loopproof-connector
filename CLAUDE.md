@@ -87,9 +87,13 @@ without a major version. So are:
   `threat_accept_rules`, `vuln_remediation` for one of `vulnerability_accept_rules`), `reason`, `review_by`,
   `decision_ref`, `finding_types`, `cves`, `package` (`name`, `version`), `where` (`resource_ids`, `tags`,
   `image_repositories`, `accounts`) and `behavioral_exception`, as `jsonencode` writes them: keys sorted, lists
-  sorted, and an unset field, an empty list or map, or a false `behavioral_exception` left out, so the same rule is
-  always the same bytes (`published_rule()` in `tests/conftest.py`). LoopProof numbers a rule's versions by its
-  content; a change to the encoding would make every tenant's rules a new version;
+  sorted, and an unset field, an empty list or map, a false `behavioral_exception` or a package's unset `version`
+  left out, so the same rule is always the same bytes (`published_rule()` in `tests/conftest.py`). LoopProof numbers
+  a rule's versions by its content; a change to the encoding would make every tenant's rules a new version. A
+  vulnerability rule names `cves`, a `package` with its `version`, or both, the `version` then optional (IH-60,
+  Aleks, 2026-11-08); a rule with both accepts a finding only when both hold, which is LoopProof's to apply. The
+  package is the one LoopProof's work grain holds: an OS package's source package, with its `version-release` and no
+  epoch, or a language package by its name and version as reported;
 - the reads LoopProof calls with the connector role: `ListTagsForResource` on a repository's ARN, and
   `SelectAggregateResourceConfig` with the aggregator's name, `aws-controltower-GuardrailsComplianceAggregator`.
 
@@ -159,7 +163,7 @@ Tower's, the tests would take it over and then delete it.
 | `tests/test_accept_rules_change.py` | A threat changed, a vulnerability added, the threat removed, an empty plan |
 | `tests/test_forwarding_pattern.py` | The rule alone, planned: default and widened `severities`, exclusions or not |
 | `tests/test_rotation.py` | The parameter `[old]` → `[old, new]` → `[new]` without a failed AssumeRole |
-| `tests/test_upgrade.py` | 1.2.0 from the registry, then this checkout: only the accept rules' read is added |
+| `tests/test_upgrade.py` | 1.3.0 from the registry, with its rules' shapes, then this checkout: no rule's bytes move |
 | `tests/test_validation.py` | Inputs, each accept rule's shape per input and the ExternalIds parameter, at plan |
 
 The forwarding tests judge every pattern with EventBridge's `TestEventPattern`, never the JSON alone, for GuardDuty,
@@ -176,13 +180,14 @@ Tests that change a deployment after its fixture applied it can't share a file w
 the parametrized cases grouped by index, after the later tests of the file. Put such a sequence in one test, in a file
 of its own, as `test_excluded_accounts_change.py` does.
 
-`test_upgrade.py` installs `test_data/upgrade`, a tenant's root, at `UPGRADE_FROM_VERSION` from the registry, by
-writing `main_override.tf` (gitignored) to swap the module's source, then removes it and plans this checkout: only
-`ADDED` may be created, only `UPDATED`'s attributes may change, besides the role's `module_version` tag at a release,
-and nothing registers again. A change to the rule shows the forwarder role's trust policy as known after apply, since
-the policy names the rule's ARN; the test checks the apply leaves it as it was. A change that adds or changes a
-resource updates `ADDED` or `UPDATED`, and moves `UPGRADE_FROM_VERSION` to the latest release. Don't name it
-`*MODULE_VERSION`: bumpversion would rewrite it.
+`test_upgrade.py` installs `test_data/upgrade`, a tenant's root, at `UPGRADE_FROM_VERSION` from the registry, by writing
+`main_override.tf` (gitignored) to swap the module's source, then removes it and plans this checkout: only `ADDED` may
+be created, only `UPDATED`'s attributes may change, besides the role's `module_version` tag at a release, and nothing
+registers again. The root holds an accept rule of every shape that release takes, and each rule's parameter must keep
+its value and its SSM version through the upgrade: LoopProof numbers a rule's versions by its bytes. A change to the
+rule shows the forwarder role's trust policy as known after apply, since the policy names the rule's ARN; the test
+checks the apply leaves it as it was. A change that adds or changes a resource updates `ADDED` or `UPDATED`, and moves
+`UPGRADE_FROM_VERSION` to the latest release. Don't name it `*MODULE_VERSION`: bumpversion would rewrite it.
 
 `test_rotation.py` takes about 20 minutes on purpose. After a trust policy change, STS refuses a newly added
 ExternalId now and then for a few minutes (a value listed before and after is never refused), so each step waits

@@ -118,8 +118,8 @@ vulnerability_accept_rules = [
 | `review_by` | both | yes | A date, `YYYY-MM-DD`, after which the rule stops applying unless a change renews it |
 | `decision_ref` | both | yes | The register entry's Linear issue identifier, such as `SEC-42` |
 | `finding_types` | threats | yes | GuardDuty's finding types, each in full, such as `Recon:EC2/PortProbeUnprotectedPort` |
-| `cves` | vulnerabilities | this or `package` | CVE identifiers, such as `CVE-2024-12797` |
-| `package` | vulnerabilities | this or `cves` | A source package's `name` and `version`, each in full |
+| `cves` | vulnerabilities | this, `package`, or both | CVE identifiers, such as `CVE-2024-12797` |
+| `package` | vulnerabilities | this, `cves`, or both | `name` and `version`, in full; `version` optional with `cves` |
 | `where.resource_ids` | both | one of the selectors | Resources by their ids |
 | `where.tags` | both | one of the selectors | Resources by their tags, a map |
 | `where.image_repositories` | vulnerabilities | one of the selectors | Container images by their repositories |
@@ -128,15 +128,23 @@ vulnerability_accept_rules = [
 
 * The input a rule is in gives its kind: the module publishes `threat_response` for a rule of `threat_accept_rules`
   and `vuln_remediation` for one of `vulnerability_accept_rules`.
+* A vulnerability rule names `cves`, and accepts a finding whose CVE is among them, in any package; or a `package`
+  with its `version`, and accepts every finding in that package at that version; or both, and accepts a finding only
+  when both hold: its CVE is among `cves`, and it is in that package, at that version if the rule gives one. Name
+  both to accept a CVE in one of the packages it is reported against, such as Terrapin's in openssh and not in
+  libssh; see the [example](examples.md#accept-a-cve-in-one-package).
+* The package is the one LoopProof files the work under: for an OS package, its source package, such as `openssh`,
+  with the version as `version-release` and no epoch, such as `8.7p1-38.amzn2023.0.4`; for a language package, its
+  name and version as the finding reports them. A binary package's name, such as `openssh-server`, matches nothing.
 * The module checks each value at plan: the fields above, each list without a value twice, and an id used twice, in
   one input or across both. Each message names the input and the ids of the rules it refuses, and no other value of
   theirs. Terraform drops an attribute the input's type doesn't name without an error, so a misspelled field, or a
   field of the other kind, is missing from the rule's published value, which the plan shows.
-* The module publishes each rule as JSON in the `String` parameter `/loopproof/<environment>/accept-rules/<id>`, in
-  the module's Region, with its fields sorted by name, its lists sorted, and the fields it doesn't set left out, so
-  the same rule always publishes the same bytes. Reordering rules, fields or lists plans no change. A rule must fit
-  in a Standard parameter's 4096 characters as JSON, as SSM counts them: an emoji counts twice, and a combining
-  accent on its own.
+* The module publishes each rule as JSON in the `String` parameter `/loopproof/<environment>/accept-rules/<id>`, in the
+  module's Region, with its fields sorted by name, its lists sorted, and the fields it doesn't set left out, a package's
+  `version` included, so the same rule always publishes the same bytes. Reordering rules, fields or lists plans no
+  change. A rule must fit in a Standard parameter's 4096 characters as JSON, as SSM counts them: an emoji counts twice,
+  and a combining accent on its own.
 * LoopProof judges what a rule means when it loads it: the register entry in Linear, the behavioral denylist and an
   exception rule's limits. See [Accepting risks](https://github.com/infrahouse/terraform-aws-loopproof-connector#accepting-risks)
   in the README.
