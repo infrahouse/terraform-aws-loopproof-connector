@@ -23,6 +23,8 @@ from tests.conftest import (
     THREAT_KIND,
     THREAT_RULE,
     VULN_CVE_RULE,
+    VULN_CVES_IN_PACKAGE_RULE,
+    VULN_CVES_IN_VERSION_RULE,
     VULN_KIND,
     VULN_PACKAGE_RULE,
     ConnectorProbe,
@@ -53,7 +55,13 @@ pytestmark = pytest.mark.parametrize(
 # one reach SSM.
 FULL_RULE = rule_of_length(STANDARD_PARAMETER_LIMIT, tail="q\u0301\U0001f600")
 THREAT_RULES = [THREAT_RULE, EXCEPTION_RULE]
-VULN_RULES = [VULN_CVE_RULE, VULN_PACKAGE_RULE, FULL_RULE]
+VULN_RULES = [
+    VULN_CVE_RULE,
+    VULN_PACKAGE_RULE,
+    VULN_CVES_IN_PACKAGE_RULE,
+    VULN_CVES_IN_VERSION_RULE,
+    FULL_RULE,
+]
 # Every rule, with the kind its input gives it.
 RULES = [(rule, THREAT_KIND) for rule in THREAT_RULES] + [
     (rule, VULN_KIND) for rule in VULN_RULES
@@ -180,6 +188,16 @@ def test_unset_fields_left_out(connector, ssm_client):
     ]
     assert "cves" not in values[parameter_name(VULN_PACKAGE_RULE)]
     assert values[parameter_name(EXCEPTION_RULE)]["behavioral_exception"] is True
+    # A rule with cves and a package holds both; a package without its version holds no version, not null.
+    for rule in [VULN_CVES_IN_PACKAGE_RULE, VULN_CVES_IN_VERSION_RULE]:
+        assert {"cves", "package"} <= set(values[parameter_name(rule)]), rule["id"]
+    assert values[parameter_name(VULN_CVES_IN_PACKAGE_RULE)]["package"] == {
+        "name": "openssh"
+    }
+    assert sorted(values[parameter_name(VULN_CVES_IN_VERSION_RULE)]["package"]) == [
+        "name",
+        "version",
+    ]
 
 
 def test_parameter_tags(connector, ssm_client):

@@ -27,6 +27,8 @@ from tests.conftest import (
     terraform_check,
     terraform_json,
     VULN_CVE_RULE,
+    VULN_CVES_IN_PACKAGE_RULE,
+    VULN_CVES_IN_VERSION_RULE,
     VULN_PACKAGE_RULE,
     write_terraform_tf,
     write_tfvars,
@@ -191,13 +193,15 @@ FINDING_TYPE_MESSAGE = (
     f"{THREATS}: finding_types must be GuardDuty finding types, each in full, such as"
     " Recon:EC2/PortProbeUnprotectedPort"
 )
-VULN_WHAT_MESSAGE = (
-    f"{VULNS}: a rule must name the cves it accepts or the package, not both"
-)
+VULN_WHAT_MESSAGE = f"{VULNS}: a rule must name the cves it accepts, a package, or both"
 CVE_MESSAGE = (
     f"{VULNS}: cves must be CVE identifiers, each in full, such as CVE-2024-12797"
 )
-PACKAGE_MESSAGE = f"{VULNS}: a package must have a name and a version, each in full"
+PACKAGE_NAME_MESSAGE = f"{VULNS}: a package must have its name"
+PACKAGE_VERSION_MESSAGE = (
+    f"{VULNS}: a package must have its version, unless the rule names cves"
+)
+PACKAGE_VALUES_MESSAGE = f"{VULNS}: a package's name and version must be in full"
 # What differs between the inputs: the where selectors, and the lists a value may not repeat in.
 WHERE_MESSAGES = {
     THREATS: f"{THREATS}: a rule's where must name resource_ids or tags; accounts only narrows them",
@@ -476,12 +480,6 @@ ACCEPT_RULES_CASES = (
             [VULN_CVE_RULE["id"]],
         ),
         (
-            "vuln-cves-and-package",
-            {VULNS: [rule(VULN_CVE_RULE, package=VULN_PACKAGE_RULE["package"])]},
-            VULN_WHAT_MESSAGE,
-            [VULN_CVE_RULE["id"]],
-        ),
-        (
             "cve-lowercase",
             {VULNS: [rule(VULN_CVE_RULE, cves=["cve-2024-12797"])]},
             CVE_MESSAGE,
@@ -499,11 +497,29 @@ ACCEPT_RULES_CASES = (
             REPEAT_MESSAGES[VULNS],
             [VULN_CVE_RULE["id"]],
         ),
+        # A package named alone still needs its version; with cves it may go without.
         (
             "package-without-version",
             {VULNS: [rule(VULN_PACKAGE_RULE, package={"name": "glibc"})]},
-            PACKAGE_MESSAGE,
+            PACKAGE_VERSION_MESSAGE,
             [VULN_PACKAGE_RULE["id"]],
+        ),
+        (
+            "package-version-null",
+            {
+                VULNS: [
+                    rule(VULN_PACKAGE_RULE, package={"name": "glibc", "version": None})
+                ]
+            },
+            PACKAGE_VERSION_MESSAGE,
+            [VULN_PACKAGE_RULE["id"]],
+        ),
+        # An empty list of cves names none.
+        (
+            "package-without-version-cves-empty",
+            {VULNS: [rule(VULN_CVES_IN_PACKAGE_RULE, cves=[])]},
+            PACKAGE_VERSION_MESSAGE,
+            [VULN_CVES_IN_PACKAGE_RULE["id"]],
         ),
         (
             "package-without-name",
@@ -512,8 +528,27 @@ ACCEPT_RULES_CASES = (
                     rule(VULN_PACKAGE_RULE, package={"version": "2.26-64.amzn2.0.1"})
                 ]
             },
-            PACKAGE_MESSAGE,
+            PACKAGE_NAME_MESSAGE,
             [VULN_PACKAGE_RULE["id"]],
+        ),
+        (
+            "package-without-name-beside-cves",
+            {
+                VULNS: [
+                    rule(
+                        VULN_CVES_IN_VERSION_RULE,
+                        package={"version": "8.7p1-38.amzn2023.0.4"},
+                    )
+                ]
+            },
+            PACKAGE_NAME_MESSAGE,
+            [VULN_CVES_IN_VERSION_RULE["id"]],
+        ),
+        (
+            "package-empty-beside-cves",
+            {VULNS: [rule(VULN_CVES_IN_PACKAGE_RULE, package={})]},
+            PACKAGE_NAME_MESSAGE,
+            [VULN_CVES_IN_PACKAGE_RULE["id"]],
         ),
         (
             "package-version-wildcard",
@@ -524,8 +559,61 @@ ACCEPT_RULES_CASES = (
                     )
                 ]
             },
-            PACKAGE_MESSAGE,
+            PACKAGE_VALUES_MESSAGE,
             [VULN_PACKAGE_RULE["id"]],
+        ),
+        (
+            "package-name-wildcard",
+            {
+                VULNS: [
+                    rule(
+                        VULN_PACKAGE_RULE,
+                        package={"name": "glibc*", "version": "2.26-64.amzn2.0.1"},
+                    )
+                ]
+            },
+            PACKAGE_VALUES_MESSAGE,
+            [VULN_PACKAGE_RULE["id"]],
+        ),
+        # A version the rule gives must be in full, cves or not.
+        (
+            "package-version-wildcard-beside-cves",
+            {
+                VULNS: [
+                    rule(
+                        VULN_CVES_IN_VERSION_RULE,
+                        package={"name": "openssh", "version": "8.7p1-*"},
+                    )
+                ]
+            },
+            PACKAGE_VALUES_MESSAGE,
+            [VULN_CVES_IN_VERSION_RULE["id"]],
+        ),
+        (
+            "package-version-empty-beside-cves",
+            {
+                VULNS: [
+                    rule(
+                        VULN_CVES_IN_VERSION_RULE,
+                        package={"name": "openssh", "version": ""},
+                    )
+                ]
+            },
+            PACKAGE_VALUES_MESSAGE,
+            [VULN_CVES_IN_VERSION_RULE["id"]],
+        ),
+        (
+            "package-name-whitespace-beside-cves",
+            {
+                VULNS: [
+                    rule(
+                        VULN_CVES_IN_PACKAGE_RULE,
+                        package={"name": "openssh server"},
+                    )
+                ]
+            },
+            PACKAGE_VALUES_MESSAGE,
+            [VULN_CVES_IN_PACKAGE_RULE["id"]],
         ),
         (
             "where-image-repository-wildcard",
@@ -782,11 +870,29 @@ def validation_root(aws_provider_version):
         ({THREATS: [THREAT_RULE]}, [EXTERNAL_ID]),
         ({VULNS: [VULN_CVE_RULE]}, [EXTERNAL_ID]),
         ({VULNS: [VULN_PACKAGE_RULE]}, [EXTERNAL_ID]),
+        ({VULNS: [VULN_CVES_IN_VERSION_RULE]}, [EXTERNAL_ID]),
+        ({VULNS: [VULN_CVES_IN_PACKAGE_RULE]}, [EXTERNAL_ID]),
+        (
+            {
+                VULNS: [
+                    rule(
+                        VULN_CVES_IN_PACKAGE_RULE,
+                        package={"name": "openssh", "version": None},
+                    )
+                ]
+            },
+            [EXTERNAL_ID],
+        ),
         ({THREATS: [EXCEPTION_RULE]}, [EXTERNAL_ID]),
         (
             {
                 THREATS: [THREAT_RULE, EXCEPTION_RULE],
-                VULNS: [VULN_CVE_RULE, VULN_PACKAGE_RULE],
+                VULNS: [
+                    VULN_CVE_RULE,
+                    VULN_PACKAGE_RULE,
+                    VULN_CVES_IN_PACKAGE_RULE,
+                    VULN_CVES_IN_VERSION_RULE,
+                ],
             },
             [EXTERNAL_ID],
         ),
@@ -826,6 +932,9 @@ def validation_root(aws_provider_version):
         "accept-rules-threat",
         "accept-rules-vuln-cves",
         "accept-rules-vuln-package",
+        "accept-rules-vuln-cves-and-package",
+        "accept-rules-vuln-cves-and-package-without-version",
+        "accept-rules-vuln-cves-and-package-version-null",
         "accept-rules-exception",
         "accept-rules-each-kind",
         "accept-rules-limits",

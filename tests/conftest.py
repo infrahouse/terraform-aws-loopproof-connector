@@ -141,8 +141,9 @@ DEFAULT_SEVERITIES = ["High", "Critical", "Fatal"]
 THREAT_KIND = "threat_response"
 VULN_KIND = "vuln_remediation"
 # One accept rule of each shape, with documentation account IDs: THREAT_RULE and EXCEPTION_RULE for
-# threat_accept_rules, VULN_CVE_RULE and VULN_PACKAGE_RULE for vulnerability_accept_rules. Their lists are out
-# of order on purpose: the module sorts them.
+# threat_accept_rules; VULN_CVE_RULE, VULN_PACKAGE_RULE, VULN_CVES_IN_PACKAGE_RULE and
+# VULN_CVES_IN_VERSION_RULE for vulnerability_accept_rules. Their lists are out of order on purpose: the module
+# sorts them. 1.3.0 takes the first four shapes, and the last two are this release's: cves and a package together.
 THREAT_RULE = {
     "id": "vpn-port-probes",
     "finding_types": [
@@ -172,6 +173,27 @@ VULN_PACKAGE_RULE = {
     "reason": "The instance is retired in January",
     "review_by": "2027-01-31",
     "decision_ref": "OPS-7",
+}
+# A CVE reported against openssh and libssh on one host, accepted in openssh only, at any version: the package
+# is the source package, as LoopProof's work grain holds it, and the rule gives no version.
+VULN_CVES_IN_PACKAGE_RULE = {
+    "id": "terrapin-openssh",
+    "cves": ["CVE-2023-48795"],
+    "package": {"name": "openssh"},
+    "where": {"resource_ids": ["i-0123456789abcdef0"]},
+    "reason": "sshd is off on this host; its SSH service is libssh's",
+    "review_by": "2027-02-28",
+    "decision_ref": "SEC-45",
+}
+# CVEs accepted in one version of a package only.
+VULN_CVES_IN_VERSION_RULE = {
+    "id": "bastion-openssh",
+    "cves": ["CVE-2024-6387", "CVE-2023-48795"],
+    "package": {"name": "openssh", "version": "8.7p1-38.amzn2023.0.4"},
+    "where": {"tags": {"role": "bastion"}},
+    "reason": "The bastion's sshd listens on the VPN only",
+    "review_by": "2027-02-28",
+    "decision_ref": "SEC-46",
 }
 # GuardDuty's type for command and control, which LoopProof denylists: only an exception rule may accept
 # it, which LoopProof judges, not the module. The ampersand is one of the characters jsonencode escapes.
@@ -302,8 +324,8 @@ def terraform_json(value: Any) -> str:
 def published_rule(rule: Dict[str, Any], kind: str) -> Dict[str, Any]:
     """
     What the module publishes for a valid rule, as LoopProof reads it: its kind, from the input it is in,
-    every field the rule sets, its lists sorted, and none it leaves unset, an empty list, an empty map or a
-    false behavioral_exception included. :func:`terraform_json` gives the bytes.
+    every field the rule sets, its lists sorted, and none it leaves unset, an empty list, an empty map, a
+    false behavioral_exception or a package's version included. :func:`terraform_json` gives the bytes.
 
     :param rule: A rule as the tenant writes it in ``threat_accept_rules`` or ``vulnerability_accept_rules``.
     :param kind: :data:`THREAT_KIND` for the first input, :data:`VULN_KIND` for the second.
@@ -316,7 +338,9 @@ def published_rule(rule: Dict[str, Any], kind: str) -> Dict[str, Any]:
         if rule.get(field):
             value[field] = sorted(rule[field])
     if rule.get("package") is not None:
-        value["package"] = rule["package"]
+        value["package"] = {
+            field: part for field, part in rule["package"].items() if part is not None
+        }
     where = {}
     for field in ["resource_ids", "image_repositories", "accounts"]:
         if rule["where"].get(field):
