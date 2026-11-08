@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2026-11-08
+
+### Documentation
+
+- A vulnerability rule naming cves and a package together (IH-60)
+- A misspelled version beside cves widens the rule (IH-60, review 1)
+
+### Features
+
+- A vulnerability rule may name its cves and a package together (IH-60)
+
+### Testing
+
+- A vulnerability rule naming cves and a package together (IH-60)
+
 ## [1.3.0] - 2026-11-04
 
 ### Bug Fixes
