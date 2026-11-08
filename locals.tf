@@ -79,7 +79,9 @@ locals {
   # Each accept rule as LoopProof reads it, by id: the fields the rule sets and its kind, sorted by name, as
   # jsonencode writes an object, with its lists sorted, so that the same rule publishes the same bytes however
   # it is written, and the plan of a reordered list is empty. A field the rule leaves unset is left out, and so
-  # are an empty list or map and a false behavioral_exception, which say no more than an unset field.
+  # are an empty list or map and a false behavioral_exception, which say no more than an unset field. So is a
+  # package's version when the rule gives none, which it may only beside cves, rather than written as null; a
+  # package with both its fields publishes the bytes 1.3.0 did.
   accept_rules = {
     for rule in local.accept_rule_sources : rule.id => jsonencode({
       for field, value in {
@@ -91,8 +93,10 @@ locals {
         finding_types = (
           rule.finding_types == null ? null : length(rule.finding_types) > 0 ? sort(rule.finding_types) : null
         )
-        cves    = rule.cves == null ? null : length(rule.cves) > 0 ? sort(rule.cves) : null
-        package = rule.package
+        cves = rule.cves == null ? null : length(rule.cves) > 0 ? sort(rule.cves) : null
+        package = rule.package == null ? null : {
+          for part, value in rule.package : part => value if value != null
+        }
         where = rule.where == null ? null : {
           for selector, values in {
             resource_ids = (
