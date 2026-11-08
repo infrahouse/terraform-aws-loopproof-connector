@@ -132,7 +132,9 @@ vulnerability_accept_rules = [
   with its `version`, and accepts every finding in that package at that version; or both, and accepts a finding only
   when both hold: its CVE is among `cves`, and it is in that package, at that version if the rule gives one. Name
   both to accept a CVE in one of the packages it is reported against, such as Terrapin's in openssh and not in
-  libssh; see the [example](examples.md#accept-a-cve-in-one-package).
+  libssh; see the [example](examples.md#accept-a-cve-in-one-package). Beside `cves`, a misspelled `version` isn't
+  refused: Terraform drops it, and the rule accepts the CVEs at every version of the package, so check the published
+  `package` in the plan.
 * The package is the one LoopProof files the work under: for an OS package, its source package, such as `openssh`,
   with the version as `version-release` and no epoch, such as `8.7p1-38.amzn2023.0.4`; for a language package, its
   name and version as the finding reports them. A binary package's name, such as `openssh-server`, matches nothing.
