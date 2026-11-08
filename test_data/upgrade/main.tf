@@ -33,4 +33,6 @@ module "connector" {
   registration_token_parameter_arn = aws_ssm_parameter.loopproof_registration_token.arn
   event_bus_arn                    = aws_cloudwatch_event_bus.control_plane.arn
   registration_url                 = var.registration_url
+  threat_accept_rules              = var.threat_accept_rules
+  vulnerability_accept_rules       = var.vulnerability_accept_rules
 }

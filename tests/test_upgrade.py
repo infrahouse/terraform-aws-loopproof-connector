@@ -1,7 +1,7 @@
 """
 The upgrade from the previous release, as a tenant takes it: the connector installed at that release from
-the registry, then the module's version changed and applied, and nothing else. One test, so that the steps
-run in order.
+the registry, with accept rules of every shape it takes, then the module's version changed and applied, and
+nothing else. One test, so that the steps run in order.
 """
 
 import json
@@ -14,11 +14,19 @@ from typing import Any, Dict, List, Set
 import pytest
 
 from tests.conftest import (
+    ACCEPT_RULES_PATH,
     CONNECTOR_POLICIES,
+    EXCEPTION_RULE,
     ROLE_ADDRESS,
     RULE_NAME,
+    STANDARD_PARAMETER_LIMIT,
     TEST_ENVIRONMENT,
+    THREAT_KIND,
+    THREAT_RULE,
     UPGRADE_ROOT,
+    VULN_CVE_RULE,
+    VULN_KIND,
+    VULN_PACKAGE_RULE,
     accept_rules_by_path,
     connector_applied,
     finding_event,
@@ -26,25 +34,36 @@ from tests.conftest import (
     forwarding_pattern_document,
     new_external_id,
     new_registration_token,
+    published_rule,
+    rule_of_length,
     terraform,
     terraform_check,
+    terraform_json,
     write_terraform_tf,
     write_tfvars,
 )
 
 # The release tenants run before this one.
-UPGRADE_FROM_VERSION = "1.2.0"
+UPGRADE_FROM_VERSION = "1.3.0"
 REGISTRY_SOURCE = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
 # Terraform merges an override file's module block into the root's, so this one swaps the root's source,
 # this checkout, for the release on the registry.
 OVERRIDE_FILE = osp.join(UPGRADE_ROOT, "main_override.tf")
 FORWARDER_ROLE_NAME = f"loopproof-{TEST_ENVIRONMENT}-forwarder"
-# All the upgrade may create: the connector role's read of the accept rules, which is there with no rule. A
-# tenant who sets no rule gets no parameter.
-ADDED: Set[str] = {"module.connector.aws_iam_role_policy.connector_accept_rules"}
-# What the plan updates in place, and which of their attributes: nothing. At a release, the connector role's
-# module_version tag changes, and the test checks it apart.
+# All the upgrade may create: nothing.
+ADDED: Set[str] = set()
+# What the plan updates in place, and which of their attributes: nothing, an accept rule's parameter included.
+# At a release, the connector role's module_version tag changes, and the test checks it apart.
 UPDATED: Dict[str, List[str]] = {}
+# Accept rules of every shape the previous release takes, as test_accept_rules.py has them: the exception's
+# finding type holds a character jsonencode escapes, and the long rule characters SSM counts twice or on their
+# own. LoopProof numbers a rule's versions by its bytes, so this checkout must publish the same bytes for each.
+THREAT_RULES = [THREAT_RULE, EXCEPTION_RULE]
+VULN_RULES = [
+    VULN_CVE_RULE,
+    VULN_PACKAGE_RULE,
+    rule_of_length(STANDARD_PARAMETER_LIMIT, tail="q\u0301\U0001f600"),
+]
 
 
 def pin_previous_release() -> None:
@@ -103,10 +122,10 @@ def test_upgrade_from_previous_release(
     registration_server,
 ):
     """
-    Changing the version adds the connector role's read of the accept rules, and at a release changes the
-    role's module_version tag. It publishes no rule, replaces nothing, changes no other resource, leaves
-    the forwarding rule and the forwarder role's trust policy as they were and doesn't register again,
-    and the next plan is empty.
+    Changing the version changes nothing but, at a release, the connector role's module_version tag. Each
+    accept rule's parameter keeps its bytes and its version, nothing is created or replaced, the forwarding
+    rule and the forwarder role's trust policy stay as they were, the connector doesn't register again, and
+    the next plan is empty.
     """
     write_terraform_tf(UPGRADE_ROOT, aws_provider_version)
     write_tfvars(
@@ -116,6 +135,8 @@ def test_upgrade_from_previous_release(
             "role_arn": test_role_arn,
             "environment": TEST_ENVIRONMENT,
             "registration_url": registration_server.url,
+            "threat_accept_rules": THREAT_RULES,
+            "vulnerability_accept_rules": VULN_RULES,
         },
     )
     pin_previous_release()
@@ -137,6 +158,21 @@ def test_upgrade_from_previous_release(
             forwarder_trust = iam_client.get_role(RoleName=FORWARDER_ROLE_NAME)["Role"][
                 "AssumeRolePolicyDocument"
             ]
+            # What the previous release published, the bytes published_rule() gives, each at its version 1.
+            rules_before = accept_rules_by_path(ssm_client)
+            assert {
+                name: parameter["Value"] for name, parameter in rules_before.items()
+            } == {
+                f"{ACCEPT_RULES_PATH}/{rule['id']}": terraform_json(
+                    published_rule(rule, kind)
+                )
+                for rules, kind in [
+                    (THREAT_RULES, THREAT_KIND),
+                    (VULN_RULES, VULN_KIND),
+                ]
+                for rule in rules
+            }
+            assert {parameter["Version"] for parameter in rules_before.values()} == {1}
 
             os.remove(OVERRIDE_FILE)
             terraform_check(UPGRADE_ROOT, "init", "-input=false")
@@ -194,7 +230,8 @@ def test_upgrade_from_previous_release(
                 sorted(iam_client.list_role_policies(RoleName=role_name)["PolicyNames"])
                 == CONNECTOR_POLICIES
             )
-            assert accept_rules_by_path(ssm_client) == {}
+            # The same values at the same versions, last modified when the previous release wrote them.
+            assert accept_rules_by_path(ssm_client) == rules_before
             result = terraform(
                 UPGRADE_ROOT, "plan", "-input=false", "-detailed-exitcode"
             )
