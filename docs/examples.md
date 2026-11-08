@@ -113,8 +113,8 @@ module "loopproof_connector" {
 }
 ```
 
-A vulnerability you accept, in `vulnerability_accept_rules`, names its CVEs, or a source package and its version, and
-where it applies:
+A vulnerability you accept, in `vulnerability_accept_rules`, names its CVEs, a package and its version, or both, and
+where it applies. Here, a package and its version, which accepts every CVE in that version:
 
 ```hcl
   vulnerability_accept_rules = [
@@ -131,6 +131,35 @@ where it applies:
 
 The next apply publishes each rule in `/loopproof/<environment>/accept-rules/<id>`, and LoopProof reads them within 15
 minutes, or at once from its Settings page. To renew a rule, change its `review_by`; to stop it, remove it.
+
+## Accept a CVE in one package
+
+A CVE can be reported against several packages on one host. Terrapin, `CVE-2023-48795`, is reported against openssh
+and libssh. On a host whose sshd is off and whose SSH service is libssh's, accept it in openssh and keep libssh's as
+work, with a rule that names both the CVE and the package:
+
+```hcl
+  vulnerability_accept_rules = [
+    {
+      id           = "terrapin-openssh"
+      cves         = ["CVE-2023-48795"]
+      package      = { name = "openssh" } # at any version
+      where        = { resource_ids = ["i-0123456789abcdef0"] }
+      reason       = "sshd is off on this host; its SSH service is libssh's"
+      review_by    = "2027-02-28"
+      decision_ref = "SEC-45"
+    },
+  ]
+```
+
+* The rule accepts a finding only when both hold: its CVE is among `cves`, and it is in openssh.
+* `openssh` is the source package, the one LoopProof files the work under. A binary package's name, such as
+  `openssh-server`, matches nothing.
+* Beside `cves` the version is optional. Without one, the rule keeps accepting the CVE in openssh after an update that
+  doesn't fix it. With one, such as `version = "8.7p1-38.amzn2023.0.4"` (`version-release`, no epoch), it accepts that
+  version only, and after such an update the finding is work again.
+* A rule with `cves` alone would accept the CVE in libssh too, since `where` narrows by resource, not by package; a
+  rule with the package alone would accept every other CVE in that version of openssh.
 
 ## Rotating the ExternalId
 

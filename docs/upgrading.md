@@ -1,5 +1,22 @@
 # Upgrading
 
+## From 1.3.0
+
+This release lets a vulnerability rule name its `cves` and a `package` together, and LoopProof then accepts a finding
+only when both hold; beside `cves`, the package's `version` is optional. See
+[Configuration](configuration.md#threat_accept_rules-and-vulnerability_accept_rules) and the
+[example](examples.md#accept-a-cve-in-one-package). No input or output changes, and LoopProof's generated module call
+needs no change but its version.
+
+### Steps
+
+1. **Change the module's version** and run `terraform init`.
+2. **`terraform apply`.** The plan changes the connector role's `module_version` tag in place, and nothing else.
+
+A rule of a shape 1.3.0 takes publishes the same bytes as before, so its parameter doesn't change, and LoopProof sees
+no new version of it. The registration doesn't run again, and the registration token isn't needed. 1.3.0 refuses a
+rule that names both `cves` and a `package` at plan: to move back to 1.3.0, remove those rules first.
+
 ## From 1.2.0
 
 This release adds `threat_accept_rules` and `vulnerability_accept_rules`, the risks you accept, which the module

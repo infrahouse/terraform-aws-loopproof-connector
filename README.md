@@ -326,7 +326,8 @@ A rule has:
 * `reason`, and `review_by`, a date (`YYYY-MM-DD`), after which the rule stops applying unless a change renews it;
 * `decision_ref`: its register entry's Linear issue identifier, such as `SEC-42`;
 * **what** it accepts, each value in full, with no prefix or wildcard, and none listed twice: for a threat,
-  GuardDuty's `finding_types`; for a vulnerability, `cves`, or a source `package`'s `name` and `version`;
+  GuardDuty's `finding_types`; for a vulnerability, `cves`, a `package`, or both (see
+  [Accepting vulnerabilities](#accepting-vulnerabilities));
 * **where** it applies: in `where`, at least one of `resource_ids`, `tags` and, for a vulnerability,
   `image_repositories`. `accounts` narrows a rule further but never stands alone: an account alone would accept
   everything in it;
@@ -366,6 +367,44 @@ LoopProof judges what a rule means when it loads it, and refuses, as a load erro
 A change that fails to load leaves the rule's last good version in force; remove the rule from your Terraform to stop
 it.
 
+#### Accepting vulnerabilities
+
+A vulnerability rule names what it accepts in one of three ways:
+
+| The rule names | It accepts a finding |
+|----------------|----------------------|
+| `cves` | whose CVE is among them, in any package |
+| a `package`, its `name` and `version` | in that package at that version, whatever its CVE, now and later |
+| `cves` and a `package`, its `version` optional | whose CVE is among them, in that package, at its version if given |
+
+The package is the one LoopProof files the work under. For an OS package that is its source package, such as
+`openssh`, with the version as `version-release` and no epoch, such as `8.7p1-38.amzn2023.0.4`; for a language
+package, such as a pip package, it is the package's name and version as the finding reports them. A binary package's
+name, such as `openssh-server`, matches nothing.
+
+Name both when a CVE is reported against several packages on one host and you accept it in one of them. Terrapin,
+`CVE-2023-48795`, is reported against openssh and libssh; on a host whose sshd is off and whose SSH service is
+libssh's, accept it in openssh, and libssh's stays work:
+
+```hcl
+  vulnerability_accept_rules = [
+    {
+      id           = "terrapin-openssh"
+      cves         = ["CVE-2023-48795"]
+      package      = { name = "openssh" } # at any version
+      where        = { resource_ids = ["i-0123456789abcdef0"] }
+      reason       = "sshd is off on this host; its SSH service is libssh's"
+      review_by    = "2027-02-28"
+      decision_ref = "SEC-45"
+    },
+  ]
+```
+
+`cves` alone would accept the CVE in libssh too: `where` narrows a rule by resource, not by package. The package
+alone would accept every other CVE in that version of openssh. Without a version, the rule keeps accepting the CVE in
+openssh after an update that doesn't fix it; with one, it accepts that version only, and after such an update the
+finding is work again. `review_by` bounds the rule either way.
+
 ### Resource tags
 
 Where a finding's resource carries no tags, LoopProof takes them from a related resource: an ECR image's from its
@@ -396,6 +435,14 @@ Until LoopProof has proven your account (a later onboarding step, in which it as
 your events. EventBridge doesn't retry a permission error; without a dead-letter queue, it drops the event and
 counts it in the rule's `FailedInvocations` metric. Nothing is lost: once the account is proven, LoopProof imports
 your findings' history through the connector role. You don't need to debug those failures.
+
+### Upgrading from 1.3.0
+
+Change the module's version and apply. The plan changes the connector role's `module_version` tag in place, and
+nothing else: a rule of a shape 1.3.0 takes publishes the same bytes, so its parameter doesn't change and LoopProof
+sees no new version of it. From then on a vulnerability rule may name `cves` and a `package` together (see
+[Accepting vulnerabilities](#accepting-vulnerabilities)). 1.3.0 refuses such a rule at plan, so moving back to it takes
+removing those rules first. See [Upgrading](https://infrahouse.github.io/terraform-aws-loopproof-connector/upgrading/).
 
 ### Upgrading from 1.2.0
 

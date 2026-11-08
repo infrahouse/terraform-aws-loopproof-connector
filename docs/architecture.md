@@ -205,11 +205,19 @@ after: the registration token works only until then, and the list may change lat
 Each rule of `threat_accept_rules` and `vulnerability_accept_rules` is its own `String` parameter,
 `/loopproof/<environment>/accept-rules/<id>`, in the module's Region, under one path for both. Its value is the rule as
 JSON with its `kind`, which its input gives it, `threat_response` or `vuln_remediation`, its fields sorted by name, as
-`jsonencode` writes an object, its lists sorted, and the fields it doesn't set left out, such as an empty list or a
-false `behavioral_exception`, so the same rule always publishes the same bytes:
+`jsonencode` writes an object, its lists sorted, and the fields it doesn't set left out, such as an empty list, a
+false `behavioral_exception` or a package's `version` beside `cves`, so the same rule always publishes the same
+bytes:
 
 ```json
 {"decision_ref":"SEC-42","finding_types":["Recon:EC2/PortProbeUnprotectedPort"],"id":"vpn-port-probes","kind":"threat_response","reason":"VPN endpoints are public by design","review_by":"2027-03-31","where":{"accounts":["111122223333"],"tags":{"role":"vpn"}}}
+```
+
+A vulnerability rule that names `cves` and a package without its version publishes the package's `name` alone, not
+`"version":null`:
+
+```json
+{"cves":["CVE-2023-48795"],"decision_ref":"SEC-45","id":"terrapin-openssh","kind":"vuln_remediation","package":{"name":"openssh"},"reason":"sshd is off on this host; its SSH service is libssh's","review_by":"2027-02-28","where":{"resource_ids":["i-0123456789abcdef0"]}}
 ```
 
 One parameter per rule keeps each within a Standard parameter's 4096 characters, and the module refuses a larger
