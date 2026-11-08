@@ -400,10 +400,12 @@ libssh's, accept it in openssh, and libssh's stays work:
   ]
 ```
 
-`cves` alone would accept the CVE in libssh too: `where` narrows a rule by resource, not by package. The package
-alone would accept every other CVE in that version of openssh. Without a version, the rule keeps accepting the CVE in
-openssh after an update that doesn't fix it; with one, it accepts that version only, and after such an update the
-finding is work again. `review_by` bounds the rule either way.
+`cves` alone would accept the CVE in libssh too: `where` narrows a rule by resource, not by package. The package alone
+would accept every other CVE in that version of openssh. Without a version, the rule keeps accepting the CVE in openssh
+after an update that doesn't fix it; with one, it accepts that version only, and after such an update the finding is
+work again. `review_by` bounds the rule either way. Beside `cves`, a misspelled `version`, such as `versoin`, isn't
+refused: Terraform drops it, and the rule accepts the CVE at every version. Check that the published `package` in the
+plan holds the version you meant.
 
 ### Resource tags
 

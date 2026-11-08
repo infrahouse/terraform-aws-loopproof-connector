@@ -157,7 +157,9 @@ work, with a rule that names both the CVE and the package:
   `openssh-server`, matches nothing.
 * Beside `cves` the version is optional. Without one, the rule keeps accepting the CVE in openssh after an update that
   doesn't fix it. With one, such as `version = "8.7p1-38.amzn2023.0.4"` (`version-release`, no epoch), it accepts that
-  version only, and after such an update the finding is work again.
+  version only, and after such an update the finding is work again. A misspelled `version`, such as `versoin`, isn't
+  refused here: Terraform drops it, and the rule accepts the CVE at every version, so check the published `package` in
+  the plan.
 * A rule with `cves` alone would accept the CVE in libssh too, since `where` narrows by resource, not by package; a
   rule with the package alone would accept every other CVE in that version of openssh.
 

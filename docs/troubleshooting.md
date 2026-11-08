@@ -105,7 +105,8 @@ looks shorter than 4096 characters can still be refused.
 
 Terraform drops an attribute the input's type doesn't name without an error, so a misspelled field, such as
 `acounts` or `finding_type`, never reaches the rule, and nor does a field of the other kind, such as `cves` in a
-threat rule. Compare the field names with
+threat rule. A misspelled `version` beside `cves`, such as `versoin`, leaves the package without its version, and the
+rule then accepts its CVEs at every version of the package. Compare the field names with
 [Configuration](configuration.md#threat_accept_rules-and-vulnerability_accept_rules), and read the parameter's value
 in the plan.
 
