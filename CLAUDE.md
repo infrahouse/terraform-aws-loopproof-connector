@@ -36,9 +36,9 @@ It creates:
   `event_bus_arn` through `loopproof-<environment>-forwarder`, which may only `events:PutEvents` there;
 - `/loopproof/<environment>/excluded-accounts`: a standard `String` SSM parameter, always created, holding
   `excluded_accounts` sorted as JSON (`[]` when empty), which the connector role may `ssm:GetParameter` (its policy
-  `excluded-accounts-parameter`) and nothing else in SSM but the accept rules, below. LoopProof reads it at
-  onboarding and daily; a registration token sets the role only while the tenant is provisional, and the list changes
-  after that;
+  `excluded-accounts-parameter`) and nothing else in SSM but the accept rules and the tenant's settings, below.
+  LoopProof reads it at onboarding and daily; a registration token sets the role only while the tenant is
+  provisional, and the list changes after that;
 - `/loopproof/<environment>/accept-rules/<id>`: one standard `String` SSM parameter per rule in `threat_accept_rules`
   and `vulnerability_accept_rules`, one input per kind (Aleks, 2026-11-04), none without a rule, holding the rule as
   JSON with the kind its input gives it (IH-60). The connector role may `ssm:GetParametersByPath` on the path and
@@ -47,6 +47,19 @@ It creates:
   from "too old to have them". The module checks each rule's shape at plan; what a rule means, the behavioral
   denylist, an exception rule's limits and the register entry in Linear, is LoopProof's to judge when it loads it,
   so none of that is copied here;
+- `/loopproof/<environment>/tenant-settings`: a standard `String` SSM parameter, always created, holding
+  `tenant_settings` (IH-156): every setting, the tenant's or LoopProof's default for one it leaves out, as JSON. The
+  connector role may `ssm:GetParameter` on it (its policy `tenant-settings-parameter`). LoopProof reads it every 15
+  minutes, numbers each new content as a version, and applies a version to the work items that open under it. A
+  setting is policy, so it lives in the tenant's Terraform and the tenant's pull request approves a change (Aleks,
+  2026-11-10). The defaults, `local.tenant_settings_defaults`, are `DEFAULTS` in infrahouse/loopproof's
+  `src/loopproof/core/tenant_settings.py`, in whole days; a setting left out is published as the default of the
+  module's release, never "LoopProof's current default", so a change to a default reaches a tenant only in an upgrade
+  whose plan shows it. The input is `type = any`: an object type drops a misspelled attribute without an error, so a
+  misspelled setting would publish the default in its place. Its checks refuse any name they don't know, at every
+  level, any value LoopProof's `tenant_settings` table refuses, and an SLA target longer than a less severe one's;
+  each mistake gets one message, so a later check passes what an earlier one refuses. A validation can't refer to a
+  local that depends on its own variable (Terraform reports a cycle), so the checks repeat their expressions;
 - `terraform_data.registration`, keyed on the role's ARN, whose `local-exec` runs `/bin/sh files/register.sh` once,
   when the resource is created: on the apply that creates the role, when the role is replaced, and with
   `terraform apply -replace`. The script POSTs `{"role_arn": ..., "region": ...}` to `registration_url` with `curl`,
@@ -70,10 +83,10 @@ both reads wait for the parameters, and the run stops at the placeholder: apply,
 
 LoopProof's onboarding generates the module call, so the variable names (`environment`,
 `control_plane_account_id`, `external_ids_parameter_arn`, `registration_token_parameter_arn`, `event_bus_arn`,
-`registration_url`, `severities`, `excluded_accounts`, `threat_accept_rules`, `vulnerability_accept_rules`) and outputs
-(`role_arn`, `region`, `role_name`, `event_rule_arn`, `excluded_accounts_parameter`, `accept_rules_parameter_path`) are
-a contract. Don't rename them
-without a major version. So are:
+`registration_url`, `severities`, `excluded_accounts`, `threat_accept_rules`, `vulnerability_accept_rules`,
+`tenant_settings`) and outputs (`role_arn`, `region`, `role_name`, `event_rule_arn`, `excluded_accounts_parameter`,
+`accept_rules_parameter_path`, `tenant_settings_parameter`) are a contract. Don't rename them without a major version.
+So are:
 
 - the registration request body's fields, `role_arn` and `region`, which LoopProof's `POST /connector/registrations`
   reads, and the token in `Authorization: Bearer`;
@@ -94,6 +107,19 @@ without a major version. So are:
   Aleks, 2026-11-08); a rule with both accepts a finding only when both hold, which is LoopProof's to apply. The
   package is the one LoopProof's work grain holds: an OS package's source package, with its `version-release` and no
   epoch, or a language package by its name and version as reported;
+- the tenant's settings: the input's shape, which LoopProof's onboarding writes, and the parameter's name and value,
+  which LoopProof reads with the connector role and numbers versions by. The input has five settings, each optional:
+  `sla_target_days`, by kind (`threat_response`, `vuln_remediation`, as a rule's `kind`) and severity (`critical`,
+  which covers Fatal, `high`, `medium`, `low`), whole days from 1 to 3650; `thresholds`, by kind, `"High"` or
+  `"Medium"` for `threat_response`, `"High"` for `vuln_remediation`, as LoopProof's table allows; `quiet_window_days`,
+  0 to 3650; `ticket_budget_per_hour`, 1 to 10000; `review_due_before_days`, 1 to 3650. The value is every setting as
+  `jsonencode` writes it, keys sorted at every level and whole numbers without a fraction (`14` whether written `14`,
+  `"14"` or `14.0`; a quiet window of `-0` as `0`), so the same settings are always the same bytes. With the defaults:
+  `{"quiet_window_days":14,"review_due_before_days":14,"sla_target_days":{"threat_response":{"critical":7,"high":14,`
+  `"low":90,"medium":30},"vuln_remediation":{"critical":7,"high":14,"low":90,"medium":30}},"thresholds":`
+  `{"threat_response":"High","vuln_remediation":"High"},"ticket_budget_per_hour":20}`, one line
+  (`DEFAULT_TENANT_SETTINGS_JSON` in `tests/conftest.py`). A new setting changes every tenant's bytes, and so makes a
+  new version for each on its upgrade: add one only with a decision like IH-156's;
 - the reads LoopProof calls with the connector role: `ListTagsForResource` on a repository's ARN, and
   `SelectAggregateResourceConfig` with the aggregator's name, `aws-controltower-GuardrailsComplianceAggregator`.
 
@@ -161,10 +187,12 @@ Tower's, the tests would take it over and then delete it.
 | `tests/test_excluded_accounts_change.py` | `[]` → `[account]` → `[]`, each in place, then an empty plan |
 | `tests/test_accept_rules.py` | Rules of each shape in both inputs: a parameter each, exact bytes, kind, the read |
 | `tests/test_accept_rules_change.py` | A threat changed, a vulnerability added, the threat removed, an empty plan |
+| `tests/test_tenant_settings.py` | Settings left out: the defaults' bytes, the read, the outsider; all changed |
+| `tests/test_tenant_settings_change.py` | Defaults → a target → left out, each a new SSM version, an empty plan |
 | `tests/test_forwarding_pattern.py` | The rule alone, planned: default and widened `severities`, exclusions or not |
 | `tests/test_rotation.py` | The parameter `[old]` → `[old, new]` → `[new]` without a failed AssumeRole |
-| `tests/test_upgrade.py` | 1.3.0 from the registry, with its rules' shapes, then this checkout: no rule's bytes move |
-| `tests/test_validation.py` | Inputs, each accept rule's shape per input and the ExternalIds parameter, at plan |
+| `tests/test_upgrade.py` | 1.4.0 from the registry, with its rules' shapes, then this checkout: no rule's bytes move |
+| `tests/test_validation.py` | Inputs, each accept rule's shape, the settings and their bytes, ExternalIds, at plan |
 
 The forwarding tests judge every pattern with EventBridge's `TestEventPattern`, never the JSON alone, for GuardDuty,
 Inspector, CSPM (`Security Hub`) and exposure (`Security Hub Exposure Detection`) findings: `finding_event` sets the
