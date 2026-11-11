@@ -41,3 +41,9 @@ variable "vulnerability_accept_rules" {
   type    = any
   default = null
 }
+
+# Any shape, so that the tests pass the settings as a tenant writes them, some left out.
+variable "tenant_settings" {
+  type    = any
+  default = null
+}

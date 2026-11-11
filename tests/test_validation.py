@@ -1,22 +1,28 @@
 """
 Input validation. Each case plans the module with one bad value, either an input or the contents of
 the ExternalIds parameter; nothing is created but the two parameters the module reads, which the
-tests create and delete themselves.
+tests create and delete themselves. The tenant's settings that pass are planned too, for the value the
+module would publish.
 """
 
 import json
+import subprocess
 from copy import deepcopy
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import pytest
 
 from tests.conftest import (
+    CHANGED_TENANT_SETTINGS,
+    DEFAULT_TENANT_SETTINGS,
+    DEFAULT_TENANT_SETTINGS_JSON,
     EXCEPTION_RULE,
     PLACEHOLDER,
     STANDARD_PARAMETER_LIMIT,
     THREAT_KIND,
     THREAT_RULE,
     VALIDATION_ROOT,
+    VULN_KIND,
     new_external_id,
     new_registration_token,
     printed,
@@ -738,6 +744,361 @@ def rule_values(inputs: Dict[str, List[Any]]) -> List[str]:
     ]
 
 
+# The tenant's settings and their messages: each names the input and the settings it refuses.
+SETTINGS = "tenant_settings"
+SETTINGS_ADDRESS = "module.connector.aws_ssm_parameter.tenant_settings"
+SETTINGS_OBJECT_MESSAGE = f"{SETTINGS} must be an object of settings."
+SETTINGS_NESTED_MESSAGE = (
+    f"{SETTINGS}: sla_target_days, each kind in it, and thresholds must be objects"
+)
+SETTINGS_UNKNOWN_MESSAGE = (
+    f"{SETTINGS}: unknown setting. The settings are sla_target_days.<kind>.<severity>,"
+    " thresholds.<kind>, quiet_window_days, ticket_budget_per_hour and review_due_before_days, where a"
+    " kind is threat_response or vuln_remediation, and a severity critical, high, medium or low,"
+    " critical covering Fatal"
+)
+TARGET_MESSAGE = (
+    f"{SETTINGS}: an SLA target must be a whole number of days from 1 to 3650"
+)
+ORDER_MESSAGE = (
+    f"{SETTINGS}: an SLA target must not be longer than a less severe one's, counting LoopProof's"
+    " default for a target left out"
+)
+THRESHOLD_MESSAGE = (
+    f"{SETTINGS}: a threshold must be High or Medium for threat_response, and High for"
+    " vuln_remediation, capitalized as Security Hub writes them"
+)
+QUIET_WINDOW_MESSAGE = (
+    f"{SETTINGS}: quiet_window_days must be a whole number of days from 0 to 3650."
+)
+BUDGET_MESSAGE = (
+    f"{SETTINGS}: ticket_budget_per_hour must be a whole number from 1 to 10000."
+)
+REVIEW_DUE_MESSAGE = (
+    f"{SETTINGS}: review_due_before_days must be a whole number of days from 1 to 3650."
+)
+
+
+def listing(message: str, *settings: str) -> str:
+    """
+    :param message: A message that ends with the settings it refuses.
+    :param settings: Those settings, as the message names them, in order.
+    :return: The whole message.
+    """
+    return f"{message}. Settings: {', '.join(settings)}."
+
+
+def targets(kind: str, **days: Any) -> Dict[str, Any]:
+    """
+    :param kind: :data:`THREAT_KIND` or :data:`VULN_KIND`.
+    :param days: SLA targets by severity.
+    :return: Settings that set those targets of that kind, and nothing else.
+    """
+    return {"sla_target_days": {kind: days}}
+
+
+def with_defaults(settings: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    :param settings: Settings as the module publishes them, some of them.
+    :return: Those settings, and LoopProof's default for every other.
+    """
+
+    def merge(base: Any, changes: Any) -> Any:
+        if not isinstance(base, dict):
+            return changes
+        return {key: merge(base[key], changes.get(key, base[key])) for key in base}
+
+    return merge(DEFAULT_TENANT_SETTINGS, settings)
+
+
+# Each case: its name, the settings, and the whole message. Each refuses one thing, and gets one error.
+SETTINGS_CASES = [
+    ("not-an-object", "High", SETTINGS_OBJECT_MESSAGE),
+    ("a-list", [14], SETTINGS_OBJECT_MESSAGE),
+    # Misspelled settings: refused, never published as LoopProof's default.
+    (
+        "unknown-setting",
+        {"quiet_window": 7},
+        listing(SETTINGS_UNKNOWN_MESSAGE, "quiet_window"),
+    ),
+    (
+        "unknown-setting-case",
+        {"Quiet_Window_Days": 7},
+        listing(SETTINGS_UNKNOWN_MESSAGE, "Quiet_Window_Days"),
+    ),
+    (
+        "unknown-kind",
+        {"sla_target_days": {"threats": {"high": 10}}},
+        listing(SETTINGS_UNKNOWN_MESSAGE, "sla_target_days.threats"),
+    ),
+    (
+        "unknown-severity",
+        targets(THREAT_KIND, hihg=21),
+        listing(SETTINGS_UNKNOWN_MESSAGE, "sla_target_days.threat_response.hihg"),
+    ),
+    (
+        "fatal",
+        targets(VULN_KIND, fatal=3),
+        listing(SETTINGS_UNKNOWN_MESSAGE, "sla_target_days.vuln_remediation.fatal"),
+    ),
+    (
+        "unknown-threshold-kind",
+        {"thresholds": {"vulnerability": "High"}},
+        listing(SETTINGS_UNKNOWN_MESSAGE, "thresholds.vulnerability"),
+    ),
+    (
+        "two-unknown",
+        {"thresholds": {"threats": "Medium"}, "quiet_window": 7},
+        listing(SETTINGS_UNKNOWN_MESSAGE, "quiet_window", "thresholds.threats"),
+    ),
+    (
+        "sla-target-days-not-an-object",
+        {"sla_target_days": 7},
+        listing(SETTINGS_NESTED_MESSAGE, "sla_target_days"),
+    ),
+    (
+        "kind-not-an-object",
+        {"sla_target_days": {THREAT_KIND: 7}},
+        listing(SETTINGS_NESTED_MESSAGE, "sla_target_days.threat_response"),
+    ),
+    (
+        "thresholds-not-an-object",
+        {"thresholds": "Medium"},
+        listing(SETTINGS_NESTED_MESSAGE, "thresholds"),
+    ),
+    (
+        "target-zero",
+        targets(THREAT_KIND, critical=0),
+        listing(TARGET_MESSAGE, "sla_target_days.threat_response.critical"),
+    ),
+    (
+        "target-negative",
+        targets(VULN_KIND, low=-90),
+        listing(TARGET_MESSAGE, "sla_target_days.vuln_remediation.low"),
+    ),
+    (
+        "target-fraction",
+        targets(THREAT_KIND, high=10.5),
+        listing(TARGET_MESSAGE, "sla_target_days.threat_response.high"),
+    ),
+    (
+        "target-fraction-as-a-string",
+        targets(THREAT_KIND, high="10.5"),
+        listing(TARGET_MESSAGE, "sla_target_days.threat_response.high"),
+    ),
+    (
+        "target-words",
+        targets(THREAT_KIND, high="two weeks"),
+        listing(TARGET_MESSAGE, "sla_target_days.threat_response.high"),
+    ),
+    (
+        "target-bool",
+        targets(VULN_KIND, medium=True),
+        listing(TARGET_MESSAGE, "sla_target_days.vuln_remediation.medium"),
+    ),
+    (
+        "target-list",
+        targets(THREAT_KIND, low=[90]),
+        listing(TARGET_MESSAGE, "sla_target_days.threat_response.low"),
+    ),
+    (
+        "target-over",
+        targets(VULN_KIND, low=3651),
+        listing(TARGET_MESSAGE, "sla_target_days.vuln_remediation.low"),
+    ),
+    (
+        "two-targets",
+        {
+            "sla_target_days": {
+                THREAT_KIND: {"high": 0},
+                VULN_KIND: {"critical": 1.5},
+            }
+        },
+        listing(
+            TARGET_MESSAGE,
+            "sla_target_days.threat_response.high",
+            "sla_target_days.vuln_remediation.critical",
+        ),
+    ),
+    # A target longer than a less severe one's, the default's when the tenant leaves that one out.
+    (
+        "order-against-a-default",
+        targets(THREAT_KIND, high=45),
+        listing(
+            ORDER_MESSAGE,
+            "sla_target_days.threat_response (critical 7, high 45, medium 30, low 90)",
+        ),
+    ),
+    (
+        "order-swapped",
+        targets(VULN_KIND, critical=14, high=7),
+        listing(
+            ORDER_MESSAGE,
+            "sla_target_days.vuln_remediation (critical 14, high 7, medium 30, low 90)",
+        ),
+    ),
+    (
+        "order-low-first",
+        targets(THREAT_KIND, low=5),
+        listing(
+            ORDER_MESSAGE,
+            "sla_target_days.threat_response (critical 7, high 14, medium 30, low 5)",
+        ),
+    ),
+    (
+        "order-both-kinds",
+        {
+            "sla_target_days": {
+                THREAT_KIND: {"medium": 100},
+                VULN_KIND: {"critical": 20},
+            }
+        },
+        listing(
+            ORDER_MESSAGE,
+            "sla_target_days.threat_response (critical 7, high 14, medium 100, low 90)",
+            "sla_target_days.vuln_remediation (critical 20, high 14, medium 30, low 90)",
+        ),
+    ),
+    # LoopProof's table allows threats High or Medium, and vulnerabilities High.
+    (
+        "threshold-threat-low",
+        {"thresholds": {THREAT_KIND: "Low"}},
+        listing(THRESHOLD_MESSAGE, "thresholds.threat_response"),
+    ),
+    (
+        "threshold-threat-critical",
+        {"thresholds": {THREAT_KIND: "Critical"}},
+        listing(THRESHOLD_MESSAGE, "thresholds.threat_response"),
+    ),
+    (
+        "threshold-threat-lowercase",
+        {"thresholds": {THREAT_KIND: "medium"}},
+        listing(THRESHOLD_MESSAGE, "thresholds.threat_response"),
+    ),
+    (
+        "threshold-threat-severity-id",
+        {"thresholds": {THREAT_KIND: 3}},
+        listing(THRESHOLD_MESSAGE, "thresholds.threat_response"),
+    ),
+    (
+        "threshold-vuln-medium",
+        {"thresholds": {VULN_KIND: "Medium"}},
+        listing(THRESHOLD_MESSAGE, "thresholds.vuln_remediation"),
+    ),
+    ("quiet-window-negative", {"quiet_window_days": -1}, QUIET_WINDOW_MESSAGE),
+    ("quiet-window-fraction", {"quiet_window_days": 0.5}, QUIET_WINDOW_MESSAGE),
+    ("quiet-window-over", {"quiet_window_days": 3651}, QUIET_WINDOW_MESSAGE),
+    ("quiet-window-words", {"quiet_window_days": "a sprint"}, QUIET_WINDOW_MESSAGE),
+    ("budget-zero", {"ticket_budget_per_hour": 0}, BUDGET_MESSAGE),
+    ("budget-fraction", {"ticket_budget_per_hour": 2.5}, BUDGET_MESSAGE),
+    ("budget-over", {"ticket_budget_per_hour": 10001}, BUDGET_MESSAGE),
+    ("review-due-zero", {"review_due_before_days": 0}, REVIEW_DUE_MESSAGE),
+    ("review-due-fraction", {"review_due_before_days": 7.5}, REVIEW_DUE_MESSAGE),
+    ("review-due-over", {"review_due_before_days": 3651}, REVIEW_DUE_MESSAGE),
+]
+
+# Settings that pass, and what the module publishes for them: every setting, each the tenant's or LoopProof's
+# default. Each case: its name, the settings, and the published value, decoded.
+SETTINGS_PUBLISHED = [
+    ("left-out", None, DEFAULT_TENANT_SETTINGS),
+    ("empty", {}, DEFAULT_TENANT_SETTINGS),
+    # A setting set to null is left out.
+    (
+        "every-setting-null",
+        {
+            "sla_target_days": None,
+            "thresholds": None,
+            "quiet_window_days": None,
+            "ticket_budget_per_hour": None,
+            "review_due_before_days": None,
+        },
+        DEFAULT_TENANT_SETTINGS,
+    ),
+    (
+        "nested-nulls",
+        {
+            "sla_target_days": {THREAT_KIND: None, VULN_KIND: {"critical": None}},
+            "thresholds": {THREAT_KIND: None},
+        },
+        DEFAULT_TENANT_SETTINGS,
+    ),
+    ("every-setting", CHANGED_TENANT_SETTINGS, CHANGED_TENANT_SETTINGS),
+    (
+        "one-target",
+        targets(THREAT_KIND, critical=5),
+        with_defaults(targets(THREAT_KIND, critical=5)),
+    ),
+    (
+        "threats-from-medium",
+        {"thresholds": {THREAT_KIND: "Medium"}},
+        with_defaults({"thresholds": {THREAT_KIND: "Medium"}}),
+    ),
+    # The same settings as every-setting, in another order, some numbers as strings or with a fraction of
+    # zero, and the quiet window as -0: the same bytes.
+    (
+        "written-another-way",
+        {
+            "review_due_before_days": "30",
+            "ticket_budget_per_hour": 50.0,
+            "quiet_window_days": -0.0,
+            "thresholds": {VULN_KIND: "High", THREAT_KIND: "Medium"},
+            "sla_target_days": {
+                VULN_KIND: {"low": "180", "medium": 60.0, "high": 30, "critical": "15"},
+                THREAT_KIND: {"low": 120, "medium": "45", "high": 10.0, "critical": 3},
+            },
+        },
+        CHANGED_TENANT_SETTINGS,
+    ),
+    # Equal targets are allowed: no target is longer than a less severe one's.
+    (
+        "lowest",
+        {
+            "sla_target_days": {
+                kind: {"critical": 1, "high": 1, "medium": 1, "low": 1}
+                for kind in [THREAT_KIND, VULN_KIND]
+            },
+            "quiet_window_days": 0,
+            "ticket_budget_per_hour": 1,
+            "review_due_before_days": 1,
+        },
+        with_defaults(
+            {
+                "sla_target_days": {
+                    kind: {"critical": 1, "high": 1, "medium": 1, "low": 1}
+                    for kind in [THREAT_KIND, VULN_KIND]
+                },
+                "quiet_window_days": 0,
+                "ticket_budget_per_hour": 1,
+                "review_due_before_days": 1,
+            }
+        ),
+    ),
+    (
+        "highest",
+        {
+            "sla_target_days": {
+                kind: {"critical": 3650, "high": 3650, "medium": 3650, "low": 3650}
+                for kind in [THREAT_KIND, VULN_KIND]
+            },
+            "quiet_window_days": 3650,
+            "ticket_budget_per_hour": 10000,
+            "review_due_before_days": 3650,
+        },
+        with_defaults(
+            {
+                "sla_target_days": {
+                    kind: {"critical": 3650, "high": 3650, "medium": 3650, "low": 3650}
+                    for kind in [THREAT_KIND, VULN_KIND]
+                },
+                "quiet_window_days": 3650,
+                "ticket_budget_per_hour": 10000,
+                "review_due_before_days": 3650,
+            }
+        ),
+    ),
+]
+
+
 # Contents of the ExternalIds parameter that the module refuses, at plan, without echoing them.
 EXTERNAL_IDS_CASES = [
     ("placeholder", PLACEHOLDER, "still holds the placeholder"),
@@ -819,6 +1180,7 @@ def tfvars(
         "excluded_accounts": None,
         "threat_accept_rules": None,
         "vulnerability_accept_rules": None,
+        "tenant_settings": None,
     }
     values.update(overrides)
     return values
@@ -1049,3 +1411,81 @@ def test_invalid_accept_rules(
         beyond = beyond.replace(f". Rules: {named}.", "")
     for value in rule_values(inputs):
         assert " ".join(value.split()) not in beyond, value
+
+
+def planned_value(root: str, address: str) -> str:
+    """
+    Read a saved plan's value for a parameter. Not through :func:`terraform`, which logs what it prints: the
+    plan's JSON holds the ExternalId, in the trust policy.
+
+    :param root: A root module with a saved plan in ``tfplan``.
+    :param address: The parameter's address.
+    :return: The value the plan gives it.
+    """
+    result = subprocess.run(
+        ["terraform", "show", "-json", "tfplan"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    changes = {
+        resource["address"]: resource["change"]
+        for resource in json.loads(result.stdout)["resource_changes"]
+    }
+    return changes[address]["after"]["insecure_value"]
+
+
+@pytest.mark.parametrize(
+    "aws_provider_version", ["~> 6.0"], ids=["aws-6"], scope="module"
+)
+@pytest.mark.parametrize(
+    "settings, message",
+    [case[1:] for case in SETTINGS_CASES],
+    ids=[case[0] for case in SETTINGS_CASES],
+)
+def test_invalid_tenant_settings(
+    validation_root, parameters, aws_region, test_role_arn, settings, message
+):
+    """
+    Settings LoopProof's table refuses, or that aren't settings at all, such as a misspelled one, fail the plan
+    with one error, whose message names the input and the settings it refuses.
+    """
+    store_external_ids(parameters, json.dumps([EXTERNAL_ID]))
+    write_tfvars(
+        validation_root,
+        tfvars(aws_region, test_role_arn, parameters, tenant_settings=settings),
+    )
+    result = terraform(validation_root, "plan", "-input=false")
+
+    assert result.returncode != 0
+    assert message in " ".join(result.stderr.split())
+    assert result.stderr.count("Error:") == 1, result.stderr
+
+
+@pytest.mark.parametrize(
+    "aws_provider_version", ["~> 6.0"], ids=["aws-6"], scope="module"
+)
+@pytest.mark.parametrize(
+    "settings, published",
+    [case[1:] for case in SETTINGS_PUBLISHED],
+    ids=[case[0] for case in SETTINGS_PUBLISHED],
+)
+def test_tenant_settings_planned(
+    validation_root, parameters, aws_region, test_role_arn, settings, published
+):
+    """
+    Settings that pass plan the parameter with every setting, each the tenant's or LoopProof's default, as
+    jsonencode writes them: the same settings, however written, are the same bytes.
+    """
+    store_external_ids(parameters, json.dumps([EXTERNAL_ID]))
+    write_tfvars(
+        validation_root,
+        tfvars(aws_region, test_role_arn, parameters, tenant_settings=settings),
+    )
+    terraform_check(validation_root, "plan", "-input=false", "-out=tfplan")
+
+    value = planned_value(validation_root, SETTINGS_ADDRESS)
+    assert value == terraform_json(published)
+    if published == DEFAULT_TENANT_SETTINGS:
+        assert value == DEFAULT_TENANT_SETTINGS_JSON

@@ -51,3 +51,9 @@ variable "vulnerability_accept_rules" {
   type    = any
   default = null
 }
+
+# Any shape, so that the tests can pass settings the module refuses, as a tenant writes them.
+variable "tenant_settings" {
+  type    = any
+  default = null
+}

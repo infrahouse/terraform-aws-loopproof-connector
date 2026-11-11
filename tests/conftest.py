@@ -90,8 +90,8 @@ IAM_PROPAGATION_TIMEOUT = 300
 INVALID_TOKEN_TIMEOUT = 120
 
 # What the connector role may do: read findings and set their status and comment, read the excluded
-# accounts and the accept rules, read repositories' tags and query the Config aggregators. Nothing more,
-# and no write but the findings' status and comment.
+# accounts, the accept rules and the tenant's settings, read repositories' tags and query the Config
+# aggregators. Nothing more, and no write but the findings' status and comment.
 CONNECTOR_ACTIONS = {
     "securityhub:GetFindings",
     "securityhub:BatchUpdateFindings",
@@ -108,6 +108,7 @@ CONNECTOR_POLICIES = [
     "ecr-repository-tags",
     "excluded-accounts-parameter",
     "security-hub-findings",
+    "tenant-settings-parameter",
 ]
 # A tag of the connector root's stand-in for a tenant's ECR repository.
 REPOSITORY_TAG = {"Key": "team", "Value": "loopproof-pytest"}
@@ -211,6 +212,42 @@ EXCEPTION_RULE = {
     "decision_ref": "SEC-44",
 }
 
+# Where the module publishes the tenant's settings (IH-156).
+TENANT_SETTINGS_PARAMETER = f"/loopproof/{TEST_ENVIRONMENT}/tenant-settings"
+# LoopProof's defaults, DEFAULTS in infrahouse/loopproof's src/loopproof/core/tenant_settings.py, in the input's
+# units: what the module publishes for a setting the tenant leaves out. Written out here, not taken from the
+# module, so that a default changed in the module fails the tests.
+DEFAULT_TENANT_SETTINGS = {
+    "sla_target_days": {
+        THREAT_KIND: {"critical": 7, "high": 14, "medium": 30, "low": 90},
+        VULN_KIND: {"critical": 7, "high": 14, "medium": 30, "low": 90},
+    },
+    "thresholds": {THREAT_KIND: "High", VULN_KIND: "High"},
+    "quiet_window_days": 14,
+    "ticket_budget_per_hour": 20,
+    "review_due_before_days": 14,
+}
+# The defaults' bytes, written out, so that the tests hold the encoding itself, not terraform_json's idea of it:
+# keys sorted at every level, no whitespace, whole numbers without a fraction.
+DEFAULT_TENANT_SETTINGS_JSON = (
+    '{"quiet_window_days":14,"review_due_before_days":14,'
+    '"sla_target_days":{"threat_response":{"critical":7,"high":14,"low":90,"medium":30},'
+    '"vuln_remediation":{"critical":7,"high":14,"low":90,"medium":30}},'
+    '"thresholds":{"threat_response":"High","vuln_remediation":"High"},'
+    '"ticket_budget_per_hour":20}'
+)
+# Every setting other than its default, but the vulnerabilities' threshold, which LoopProof allows at High only.
+CHANGED_TENANT_SETTINGS = {
+    "sla_target_days": {
+        THREAT_KIND: {"critical": 3, "high": 10, "medium": 45, "low": 120},
+        VULN_KIND: {"critical": 15, "high": 30, "medium": 60, "low": 180},
+    },
+    "thresholds": {THREAT_KIND: "Medium", VULN_KIND: "High"},
+    "quiet_window_days": 0,
+    "ticket_budget_per_hour": 50,
+    "review_due_before_days": 30,
+}
+
 
 def new_external_id() -> str:
     """
@@ -274,6 +311,7 @@ def connector_tfvars(
     excluded_accounts: Optional[List[str]] = None,
     threat_accept_rules: Optional[List[Dict[str, Any]]] = None,
     vulnerability_accept_rules: Optional[List[Dict[str, Any]]] = None,
+    tenant_settings: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Build the variables of the ``connector`` test root module. The ExternalIds and the registration
@@ -285,6 +323,7 @@ def connector_tfvars(
     :param excluded_accounts: Accounts whose findings aren't forwarded; ``None`` for the module's default.
     :param threat_accept_rules: The threats the tenant accepts; ``None`` for the module's default, none.
     :param vulnerability_accept_rules: The vulnerabilities it accepts; ``None`` for the default, none.
+    :param tenant_settings: The tenant's settings; ``None`` for the module's default, LoopProof's defaults.
     :return: Variable names and values.
     """
     return {
@@ -295,6 +334,7 @@ def connector_tfvars(
         "excluded_accounts": excluded_accounts,
         "threat_accept_rules": threat_accept_rules,
         "vulnerability_accept_rules": vulnerability_accept_rules,
+        "tenant_settings": tenant_settings,
     }
 
 

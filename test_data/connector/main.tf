@@ -43,6 +43,7 @@ module "connector" {
   excluded_accounts                = var.excluded_accounts
   threat_accept_rules              = var.threat_accept_rules
   vulnerability_accept_rules       = var.vulnerability_accept_rules
+  tenant_settings                  = var.tenant_settings
 }
 
 # Stands in for a repository of the tenant's, whose tags LoopProof reads with the connector role.

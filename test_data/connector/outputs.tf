@@ -22,6 +22,10 @@ output "accept_rules_parameter_path" {
   value = module.connector.accept_rules_parameter_path
 }
 
+output "tenant_settings_parameter" {
+  value = module.connector.tenant_settings_parameter
+}
+
 output "external_ids_parameter_arn" {
   value = aws_ssm_parameter.loopproof_external_ids.arn
 }
