@@ -23,3 +23,8 @@ output "accept_rules_parameter_path" {
   description = "The SSM path where LoopProof reads the accept rules, one parameter per rule."
   value       = module.loopproof_connector.accept_rules_parameter_path
 }
+
+output "tenant_settings_parameter" {
+  description = "The SSM parameter where LoopProof reads your settings."
+  value       = module.loopproof_connector.tenant_settings_parameter
+}
