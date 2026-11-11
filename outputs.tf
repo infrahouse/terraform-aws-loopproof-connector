@@ -39,3 +39,11 @@ output "accept_rules_parameter_path" {
   EOT
   value       = local.accept_rules_parameter_path
 }
+
+output "tenant_settings_parameter" {
+  description = <<-EOT
+    Name of the SSM parameter that publishes tenant_settings to LoopProof, /loopproof/<environment>/tenant-settings:
+    every setting, LoopProof's default for each one left out.
+  EOT
+  value       = aws_ssm_parameter.tenant_settings.name
+}
