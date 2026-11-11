@@ -61,3 +61,18 @@ variable "vulnerability_accept_rules" {
   description = "The vulnerabilities you accept, each rule with its register entry in Linear."
   default     = []
 }
+
+# Any shape, so that you set only the settings your policy states; the module checks them at plan, refuses a
+# setting it doesn't know, and publishes LoopProof's default for each you leave out. See "Your settings in
+# LoopProof" in the module's README, for example:
+#
+#   tenant_settings = {
+#     sla_target_days = {
+#       vuln_remediation = { critical = 15, high = 30, medium = 60, low = 180 }
+#     }
+#   }
+variable "tenant_settings" {
+  type        = any
+  description = "Your settings in LoopProof: SLA targets, thresholds, quiet window, ticket budget and review due."
+  default     = {}
+}

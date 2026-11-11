@@ -55,4 +55,8 @@ module "loopproof_connector" {
   # within 15 minutes.
   threat_accept_rules        = var.threat_accept_rules
   vulnerability_accept_rules = var.vulnerability_accept_rules
+
+  # Your settings in LoopProof, such as your SLA targets; LoopProof's defaults for those you leave out. LoopProof
+  # reads them within 15 minutes, and a change applies to work items that open after it.
+  tenant_settings = var.tenant_settings
 }

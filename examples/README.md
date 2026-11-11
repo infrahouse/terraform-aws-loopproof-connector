@@ -20,3 +20,7 @@ the connector and registers it with LoopProof, once.
 
 To keep an account's findings out of LoopProof, add `-var 'excluded_accounts=["111122223333"]'`; any later apply can
 change the list.
+
+To set your SLA targets, or another of your settings in LoopProof, add `tenant_settings`, such as
+`-var 'tenant_settings={sla_target_days={vuln_remediation={critical=15,high=30,medium=60,low=180}}}'`. The settings you
+leave out are LoopProof's defaults; see [Your settings in LoopProof](../README.md#your-settings-in-loopproof).
