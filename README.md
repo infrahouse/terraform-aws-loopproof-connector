@@ -18,7 +18,8 @@ the access it needs in your account, and nothing more:
 * an EventBridge rule that forwards Security Hub's "Findings Imported V2" events to LoopProof's event bus:
   GuardDuty's findings at every severity, and the other findings of the severities you choose, except the findings of
   the accounts you exclude;
-* an SSM parameter that tells LoopProof which accounts you exclude, and one per accept rule, the risks you accept;
+* an SSM parameter that tells LoopProof which accounts you exclude, one per accept rule, the risks you accept, and one
+  with your settings in LoopProof, such as your SLA targets;
 * one call, on the apply that creates the role, that reports the role's ARN and the Region to LoopProof, so
   onboarding needs no copy and paste.
 
@@ -52,11 +53,14 @@ permissions, a long-lived ExternalId in a tfvars file, and an ARN pasted into a 
   published in SSM for LoopProof to read
 * Accept rules: the risks you accept, written in `threat_accept_rules` and `vulnerability_accept_rules` and changed by
   pull request in your repository, each published in SSM for LoopProof to read and never to write
+* Your settings in LoopProof: your SLA targets, thresholds, quiet window, ticket budget and review due, written in
+  `tenant_settings` and changed by pull request, published in SSM for LoopProof to read, LoopProof's defaults for
+  those you leave out
 * Forwarder role that may only `events:PutEvents` on LoopProof's bus
 * The ExternalIds read from an SSM parameter, checked before use; the registration token read as an ephemeral value
 * Self-registration once, at apply, with `curl`, retried on connection errors and 5xx answers only
-* Input validation for account ID, parameter ARNs, bus ARN, registration URL, severities, excluded accounts and the
-  shape of each accept rule
+* Input validation for account ID, parameter ARNs, bus ARN, registration URL, severities, excluded accounts, the
+  shape of each accept rule, and your settings, refusing a misspelled one
 
 ## Quick Start
 
@@ -273,7 +277,8 @@ module "loopproof_connector" {
   `/loopproof/<environment>/excluded-accounts`, in the module's Region; the `excluded_accounts_parameter` output
   names it. The parameter exists, holding `[]`, when you exclude nothing. LoopProof reads it with the connector role
   when it proves your account, and daily after, to keep those accounts out of its scope. In SSM, the role may read
-  that parameter and the [accept rules](#accepting-risks), and nothing else: not the ExternalIds' or the token's.
+  that parameter, the [accept rules](#accepting-risks) and [your settings](#your-settings-in-loopproof), and nothing
+  else: not the ExternalIds' or the token's.
 * A change takes effect on the next apply. Make it as you change the rest of your Terraform, by pull request;
   LoopProof doesn't ask why.
 * IAM can't limit `securityhub:GetFindings` to some accounts, so the connector role can still read an excluded
@@ -407,6 +412,57 @@ work again. `review_by` bounds the rule either way. Beside `cves`, a misspelled 
 refused: Terraform drops it, and the rule accepts the CVE at every version. Check that the published `package` in the
 plan holds the version you meant.
 
+### Your settings in LoopProof
+
+Your SLA targets, your thresholds, your quiet window, your ticket budget and when an accept rule is due for review are
+your policy, so they live in your Terraform, in `tenant_settings`, and change by pull request in your repository, as
+your accept rules do. Set the ones your security policy states, and leave the rest out:
+
+```hcl
+module "loopproof_connector" {
+  # ...
+  tenant_settings = {
+    sla_target_days = {
+      threat_response  = { critical = 3, high = 10 }
+      vuln_remediation = { critical = 15, high = 30, medium = 60, low = 180 } # critical covers Fatal
+    }
+    thresholds = {
+      threat_response = "Medium" # the lowest severity that opens a work item
+    }
+    ticket_budget_per_hour = 50
+  }
+}
+```
+
+| Setting | Default | What |
+|---------|---------|------|
+| `sla_target_days.<kind>.<severity>` | `critical` 7, `high` 14, `medium` 30, `low` 90 | Days from a work item's start to its due date |
+| `thresholds.<kind>` | `"High"` | The lowest severity that opens a work item: `"High"` or `"Medium"` for threats, `"High"` for vulnerabilities |
+| `quiet_window_days` | 14 | How long after a work item closes a returning finding reopens it, rather than open a new one |
+| `ticket_budget_per_hour` | 20 | How many tickets LoopProof files in any hour |
+| `review_due_before_days` | 14 | How long before an accept rule's `review_by` LoopProof reopens its register entry for review |
+
+The kinds are `threat_response`, GuardDuty's threats, and `vuln_remediation`, vulnerabilities. Days are whole days.
+
+* **The module publishes every setting** as JSON in the SSM `String` parameter
+  `/loopproof/<environment>/tenant-settings`, in the module's Region; the `tenant_settings_parameter` output names it.
+  A setting you leave out is published as
+  LoopProof's default in the module's release you run, so a later change to the defaults reaches you only in a module
+  upgrade, whose plan shows it.
+* **The module checks the settings at plan:** a setting it doesn't know, such as a misspelled `hihg` or `fatal`
+  (`critical` covers Fatal), is refused, never published as the default in its place; so is a value outside the
+  table, or an SLA target longer than a less severe one's, counting the defaults of those you leave out.
+* **Before you change a setting:**
+  * LoopProof reads the parameter within 15 minutes of the apply, and records each change as a new version in your
+    tenant's audit trail. Your pull request is the approval.
+  * A change applies to the work items that open after LoopProof reads it. Open work items keep their due dates, also
+    when a more severe finding joins one later.
+  * A grace window no longer shorter than its SLA target turns your grace policy off, and work items in grace are filed
+    then. Set a grace policy that fits on LoopProof's Settings page afterwards.
+
+See [Configuration](https://infrahouse.github.io/terraform-aws-loopproof-connector/configuration/#tenant_settings) for
+each setting's bounds and the parameter's value.
+
 ### Resource tags
 
 Where a finding's resource carries no tags, LoopProof takes them from a related resource: an ECR image's from its
@@ -437,6 +493,15 @@ Until LoopProof has proven your account (a later onboarding step, in which it as
 your events. EventBridge doesn't retry a permission error; without a dead-letter queue, it drops the event and
 counts it in the rule's `FailedInvocations` metric. Nothing is lost: once the account is proven, LoopProof imports
 your findings' history through the connector role. You don't need to debug those failures.
+
+### Upgrading from 1.4.0
+
+Change the module's version and apply. The plan adds the parameter `/loopproof/<environment>/tenant-settings`, holding
+LoopProof's defaults, the settings LoopProof applies to you until then, and the connector role's policy
+`tenant-settings-parameter`, its read of it, and changes the role's `module_version` tag in place. It changes no policy
+and replaces nothing; your accept rules' parameters keep their bytes, and the role doesn't register again. Set
+`tenant_settings` when your policy's numbers differ (see [Your settings in LoopProof](#your-settings-in-loopproof)). See
+[Upgrading](https://infrahouse.github.io/terraform-aws-loopproof-connector/upgrading/).
 
 ### Upgrading from 1.3.0
 

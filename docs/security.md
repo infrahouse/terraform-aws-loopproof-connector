@@ -8,9 +8,9 @@ A role of another environment, another account, or any caller without the Extern
 
 ## Permissions
 
-The role can read findings, set their status and comment, read the list of the accounts you exclude and your accept
-rules, read your ECR repositories' tags, and query your Config aggregators, which can return any configuration they
-hold, not only tags; nothing else:
+The role can read findings, set their status and comment, read the list of the accounts you exclude, your accept
+rules and your settings, read your ECR repositories' tags, and query your Config aggregators, which can return any
+configuration they hold, not only tags; nothing else:
 
 * `securityhub:GetFindings`, which `GetFindingsV2` requires;
 * `securityhub:BatchUpdateFindings`, which `BatchUpdateFindingsV2` requires, denied when the request sets
@@ -20,6 +20,8 @@ hold, not only tags; nothing else:
   token;
 * `ssm:GetParametersByPath` on `/loopproof/<environment>/accept-rules`, and `ssm:GetParameter` and
   `ssm:GetParameters` on the parameters under it: your accept rules, `String` parameters too. It can't write them;
+* `ssm:GetParameter` on `/loopproof/<environment>/tenant-settings` alone: your settings, a `String` parameter too. It
+  can't write it;
 * `ecr:ListTagsForResource` on the account's ECR repositories, in every Region: their tags, and nothing else of ECR,
   not their images or settings;
 * `config:SelectAggregateResourceConfig` on the account's AWS Config aggregators in the module's Region, such as AWS
@@ -68,6 +70,14 @@ Your accept rules live in your Terraform, so a rule changes only by pull request
 review, and an apply. LoopProof reads them with the connector role and can't write them: the role may read the
 parameters under `/loopproof/<environment>/accept-rules`, and change none. A rule isn't secret: the plan shows it, and
 anyone in your account allowed to read those parameters can read it.
+
+## Your settings
+
+Your settings in LoopProof, your SLA targets among them, live in your Terraform, so a setting changes only by pull
+request in your repository, with your own review, and an apply. LoopProof reads them with the connector role and
+can't write them: the role may `ssm:GetParameter` on `/loopproof/<environment>/tenant-settings`, and nothing else of
+it. LoopProof records each change it reads as a version in your tenant's audit trail. The settings aren't secret: the
+plan shows them, and anyone in your account allowed to read the parameter can read them.
 
 ## The ExternalId
 

@@ -30,6 +30,7 @@ your Security Hub findings into Linear tickets, and nothing more:
   across accounts and Regions
 * Account exclusion at the edge, with the list published for LoopProof in SSM
 * Accept rules, the risks you accept, changed by pull request in your repository and published for LoopProof in SSM
+* Your settings in LoopProof, such as your SLA targets, changed by pull request and published for LoopProof in SSM
 * ExternalId rotation without a failed `AssumeRole`, and without a change to your Terraform
 * One registration call, at apply, with `curl`; no call on a plan
 

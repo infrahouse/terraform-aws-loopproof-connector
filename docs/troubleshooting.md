@@ -110,6 +110,19 @@ rule then accepts its CVEs at every version of the package. Compare the field na
 [Configuration](configuration.md#threat_accept_rules-and-vulnerability_accept_rules), and read the parameter's value
 in the plan.
 
+## The plan fails with "tenant_settings: …"
+
+A setting is wrong; the message says what, and ends with the settings it refuses:
+
+* "unknown setting": a name the module doesn't know, such as a misspelled one. The module refuses it rather than
+  publish LoopProof's default in its place. `fatal` is no severity of its own: `critical` covers Fatal.
+* "an SLA target must not be longer than a less severe one's": the message lists the kind's four targets, with the
+  defaults of those you left out. Raising `high` above 30 alone, for instance, needs `medium` and `low` raised too.
+* "a threshold must be …": LoopProof allows threats from High or Medium, and vulnerabilities from High, capitalized as
+  Security Hub writes them.
+
+See [Configuration](configuration.md#tenant_settings) for each setting's bounds.
+
 ## LoopProof can't derive the tags of another account's resources
 
 LoopProof reads them from AWS Control Tower's Config aggregator, `aws-controltower-GuardrailsComplianceAggregator`,
