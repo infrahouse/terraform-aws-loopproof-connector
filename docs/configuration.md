@@ -151,6 +151,68 @@ vulnerability_accept_rules = [
   exception rule's limits. See [Accepting risks](https://github.com/infrahouse/terraform-aws-loopproof-connector#accepting-risks)
   in the README.
 
+### `tenant_settings`
+
+Default `{}`: LoopProof's defaults. Your settings in LoopProof, as your security policy states them: the SLA targets,
+the thresholds, the quiet window, the ticket budget and review due. A setting is policy, so it lives in your Terraform
+and changes by pull request in your repository, as an accept rule does; LoopProof reads it and never writes it. Set
+the ones your policy states and leave the rest out:
+
+```hcl
+tenant_settings = {
+  sla_target_days = {
+    threat_response  = { critical = 3, high = 10 }
+    vuln_remediation = { critical = 15, high = 30, medium = 60, low = 180 }
+  }
+  thresholds = {
+    threat_response = "Medium"
+  }
+  ticket_budget_per_hour = 50
+}
+```
+
+| Setting | Default | What |
+|---------|---------|------|
+| `sla_target_days.<kind>.<severity>` | `critical` 7, `high` 14, `medium` 30, `low` 90, for both kinds | The days from a work item's start to its due date, by the severity of its most severe finding. `critical` covers Fatal. Whole days, from 1 to 3650 |
+| `thresholds.<kind>` | `"High"` for both kinds | The lowest severity that opens a work item: `"High"` or `"Medium"` for `threat_response`, `"High"` for `vuln_remediation` |
+| `quiet_window_days` | 14 | How long after a work item closes a returning finding reopens it, rather than open a new work item. Whole days, from 0 to 3650 |
+| `ticket_budget_per_hour` | 20 | How many tickets LoopProof files in any hour, every severity alike. From 1 to 10000 |
+| `review_due_before_days` | 14 | How long before an accept rule's `review_by` the rule is due for review: LoopProof reopens its register entry then. Whole days, from 1 to 3650 |
+
+The kinds are LoopProof's: `threat_response` for GuardDuty's threats, the findings `threat_accept_rules` accepts, and
+`vuln_remediation` for vulnerabilities, the findings `vulnerability_accept_rules` accepts. A threats' threshold of
+`"Medium"` works because the connector forwards GuardDuty's findings at every severity; LoopProof allows no
+vulnerabilities' threshold below High.
+
+* **Every setting, always.** The module publishes all five as JSON in the `String` parameter
+  `/loopproof/<environment>/tenant-settings`, in the module's Region; the `tenant_settings_parameter` output names it.
+  It exists with the defaults too, so that LoopProof can tell a tenant on the defaults from a connector too old to say.
+  A setting you leave out is published as the default of the module's release you run, never read as "LoopProof's
+  default now": a later change to LoopProof's defaults reaches you only in a module upgrade, whose plan shows it.
+* **The same settings are the same bytes:** keys sorted at every level, as `jsonencode` writes them, and whole numbers
+  without a fraction, so writing `"14"` or `14.0` for `14`, or the settings in another order, plans no change. With
+  the defaults:
+
+  ```json
+  {"quiet_window_days":14,"review_due_before_days":14,"sla_target_days":{"threat_response":{"critical":7,"high":14,"low":90,"medium":30},"vuln_remediation":{"critical":7,"high":14,"low":90,"medium":30}},"thresholds":{"threat_response":"High","vuln_remediation":"High"},"ticket_budget_per_hour":20}
+  ```
+
+* **The module checks the settings at plan,** and each message names the input and the settings it refuses:
+  * a setting it doesn't know, such as a misspelled `hihg`, or `fatal`, which `critical` covers. It refuses it rather
+    than publish the default in its place;
+  * a value outside the table above, or a threshold LoopProof doesn't allow;
+  * an SLA target longer than a less severe one's, counting the defaults of those you leave out: `high = 45` alone is
+    refused, since Medium's default is 30, so set `medium` and `low` too. Equal targets are allowed.
+
+  Nothing checks your targets against your grace policy, which the module doesn't know: see below.
+* **Before you change a setting:**
+  * LoopProof reads the parameter within 15 minutes of the apply, and records each change as a new version in your
+    tenant's audit trail, with the time it took effect. Your pull request is the approval; LoopProof asks for none.
+  * A change applies to the work items that open after LoopProof reads it. An open work item keeps the settings it
+    opened under: its due date, also when a more severe finding joins it later, and its SLA judgement when it closes.
+  * A grace window no longer shorter than its SLA target turns your grace policy off: work items in grace are filed
+    then. Set a grace policy that fits on LoopProof's Settings page afterwards.
+
 ## Outputs
 
 | Output | Description |
@@ -161,6 +223,7 @@ vulnerability_accept_rules = [
 | `event_rule_arn` | ARN of the EventBridge rule |
 | `excluded_accounts_parameter` | `/loopproof/<environment>/excluded-accounts`, which publishes `excluded_accounts` |
 | `accept_rules_parameter_path` | `/loopproof/<environment>/accept-rules`, under which each rule of both inputs is a parameter |
+| `tenant_settings_parameter` | `/loopproof/<environment>/tenant-settings`, which publishes `tenant_settings` |
 
 Before LoopProof has proven your account, you can paste `role_arn` and `region` into LoopProof's onboarding if the
 registration call failed. Once it has, LoopProof takes no paste.

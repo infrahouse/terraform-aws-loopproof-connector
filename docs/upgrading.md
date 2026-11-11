@@ -1,5 +1,26 @@
 # Upgrading
 
+## From 1.4.0
+
+This release adds `tenant_settings`, your settings in LoopProof: the SLA targets, the thresholds, the quiet window, the
+ticket budget and review due, which the module publishes in SSM for LoopProof to read, and the connector role's read of
+them; see [Configuration](configuration.md#tenant_settings). LoopProof's generated module call needs no change but its
+version.
+
+### Steps
+
+1. **Change the module's version** and run `terraform init`.
+2. **`terraform apply`.** The plan adds the parameter `/loopproof/<environment>/tenant-settings`, holding LoopProof's
+   defaults, and the connector role's policy `tenant-settings-parameter`, which reads it, and changes the role's
+   `module_version` tag in place.
+
+The defaults it publishes are the settings LoopProof applies to every tenant until then, so the upgrade changes no
+policy. Nothing else changes: an accept rule's parameter keeps its bytes and its version, nothing is replaced, the
+registration doesn't run again, and the registration token isn't needed. Set `tenant_settings` when your policy's
+numbers differ from the defaults, in a pull request of its own; read "Before you change a setting" in
+[Configuration](configuration.md#tenant_settings) first. 1.4.0 has no such input: to move back to it, remove
+`tenant_settings` first, and the apply deletes the parameter and its read.
+
 ## From 1.3.0
 
 This release lets a vulnerability rule name its `cves` and a `package` together, and LoopProof then accepts a finding

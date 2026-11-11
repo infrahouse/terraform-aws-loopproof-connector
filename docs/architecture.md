@@ -10,6 +10,7 @@ flowchart LR
         CONN["Role loopproof-&lt;env&gt;-connector"]
         PARAM["SSM parameter /loopproof/&lt;env&gt;/excluded-accounts"]
         RULES["SSM parameters /loopproof/&lt;env&gt;/accept-rules/*"]
+        SETTINGS["SSM parameter /loopproof/&lt;env&gt;/tenant-settings"]
         CREDS["SSM parameters: ExternalIds, registration token"]
         ECR["ECR repositories, every Region"]
         AGG["Config aggregators, such as Control Tower's"]
@@ -27,6 +28,7 @@ flowchart LR
     CONN -- "GetFindingsV2, BatchUpdateFindingsV2" --> SH
     CONN -- "GetParameter" --> PARAM
     CONN -- "GetParametersByPath" --> RULES
+    CONN -- "GetParameter" --> SETTINGS
     CONN -- "ListTagsForResource" --> ECR
     CONN -- "SelectAggregateResourceConfig" --> AGG
     TF -- "reads" --> CREDS
@@ -54,7 +56,8 @@ Its inline policy `security-hub-findings`:
 
 Its inline policy `excluded-accounts-parameter` allows `ssm:GetParameter` on the
 [excluded accounts' parameter](#excluded-accounts) alone, `accept-rules-parameters` reads the
-[accept rules](#accept-rules), and its policies `ecr-repository-tags` and `config-aggregator-query` read
+[accept rules](#accept-rules), `tenant-settings-parameter` allows `ssm:GetParameter` on the
+[tenant's settings](#tenant-settings) alone, and its policies `ecr-repository-tags` and `config-aggregator-query` read
 [resource tags](#resource-tags); the second can read more than tags. The role's description names the Security Hub
 and tag reads.
 
@@ -231,6 +234,24 @@ it ([Parameter Store access](https://docs.aws.amazon.com/systems-manager/latest/
 so nothing above the path is granted. The policy is there with no rule: LoopProof's read by path then returns none,
 while a connector too old to have the policy refuses it, so LoopProof can tell the two apart. The rules are `String`
 parameters, which need no KMS permission.
+
+## Tenant settings
+
+The `String` parameter `/loopproof/<environment>/tenant-settings`, in the module's Region, holds `tenant_settings`:
+every setting, the tenant's or, for one it leaves out, LoopProof's default in this release of the module. It always
+exists, so that LoopProof can tell a tenant on the defaults from a connector too old to say. Its value is the settings
+as `jsonencode` writes them, keys sorted at every level and whole numbers without a fraction, so the same settings
+always publish the same bytes, which LoopProof numbers its versions of them by. With the defaults:
+
+```json
+{"quiet_window_days":14,"review_due_before_days":14,"sla_target_days":{"threat_response":{"critical":7,"high":14,"low":90,"medium":30},"vuln_remediation":{"critical":7,"high":14,"low":90,"medium":30}},"thresholds":{"threat_response":"High","vuln_remediation":"High"},"ticket_budget_per_hour":20}
+```
+
+The input is of any type, not an object type: Terraform drops an attribute an object type doesn't name, without an
+error, so a misspelled setting would publish the default in its place. The module's checks refuse every name they
+don't know, at every level, and every value LoopProof's `tenant_settings` table refuses. The connector role's policy
+`tenant-settings-parameter` allows `ssm:GetParameter` on this parameter alone; LoopProof reads it every 15 minutes. It
+is a `String` parameter, which needs no KMS permission.
 
 ## The parameters
 

@@ -163,6 +163,28 @@ work, with a rule that names both the CVE and the package:
 * A rule with `cves` alone would accept the CVE in libssh too, since `where` narrows by resource, not by package; a
   rule with the package alone would accept every other CVE in that version of openssh.
 
+## Your policy's SLA targets
+
+Your security policy gives a Critical vulnerability 15 days and a High one 30, and LoopProof's defaults are 7 and 14.
+Set the targets in `tenant_settings`, with Medium's and Low's, which must be no shorter than High's:
+
+```hcl
+module "loopproof_connector" {
+  # ...
+  tenant_settings = {
+    sla_target_days = {
+      vuln_remediation = { critical = 15, high = 30, medium = 60, low = 180 }
+    }
+  }
+}
+```
+
+The plan shows the parameter `/loopproof/<environment>/tenant-settings` changing, with every setting: the threats'
+targets, the thresholds and the rest keep LoopProof's defaults. LoopProof reads it within 15 minutes of the apply and
+records the change in your tenant's audit trail. Work items that open after that are due by the new targets; open ones
+keep their due dates. If a grace window is no longer shorter than its new target, LoopProof turns your grace policy
+off, and you set one that fits on its Settings page. See [Configuration](configuration.md#tenant_settings).
+
 ## Rotating the ExternalId
 
 The Terraform doesn't change; the parameter does.
