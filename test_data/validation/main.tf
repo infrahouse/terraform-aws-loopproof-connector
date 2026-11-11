@@ -13,4 +13,5 @@ module "connector" {
   excluded_accounts                = var.excluded_accounts
   threat_accept_rules              = var.threat_accept_rules
   vulnerability_accept_rules       = var.vulnerability_accept_rules
+  tenant_settings                  = var.tenant_settings
 }

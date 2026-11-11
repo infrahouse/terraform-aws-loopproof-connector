@@ -188,8 +188,8 @@ def test_connector_trust_policy(connector, iam_client):
 def test_connector_permissions(connector, iam_client):
     """
     The connector role may only read findings and set their status and comment, read the excluded
-    accounts and the accept rules, read repositories' tags and query the Config aggregators. The accept
-    rules' read is there with no rule.
+    accounts, the accept rules and the tenant's settings, read repositories' tags and query the Config
+    aggregators. The accept rules' read is there with no rule.
     """
     role_name = connector["outputs"]["role_name"]
     statements = inline_policy_statements(iam_client, role_name)

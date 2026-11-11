@@ -16,15 +16,19 @@ import pytest
 from tests.conftest import (
     ACCEPT_RULES_PATH,
     CONNECTOR_POLICIES,
+    DEFAULT_TENANT_SETTINGS_JSON,
     EXCEPTION_RULE,
     ROLE_ADDRESS,
     RULE_NAME,
     STANDARD_PARAMETER_LIMIT,
+    TENANT_SETTINGS_PARAMETER,
     TEST_ENVIRONMENT,
     THREAT_KIND,
     THREAT_RULE,
     UPGRADE_ROOT,
     VULN_CVE_RULE,
+    VULN_CVES_IN_PACKAGE_RULE,
+    VULN_CVES_IN_VERSION_RULE,
     VULN_KIND,
     VULN_PACKAGE_RULE,
     accept_rules_by_path,
@@ -44,14 +48,18 @@ from tests.conftest import (
 )
 
 # The release tenants run before this one.
-UPGRADE_FROM_VERSION = "1.3.0"
+UPGRADE_FROM_VERSION = "1.4.0"
 REGISTRY_SOURCE = "registry.infrahouse.com/infrahouse/loopproof-connector/aws"
 # Terraform merges an override file's module block into the root's, so this one swaps the root's source,
 # this checkout, for the release on the registry.
 OVERRIDE_FILE = osp.join(UPGRADE_ROOT, "main_override.tf")
 FORWARDER_ROLE_NAME = f"loopproof-{TEST_ENVIRONMENT}-forwarder"
-# All the upgrade may create: nothing.
-ADDED: Set[str] = set()
+# All the upgrade may create: the tenant's settings' parameter, which holds LoopProof's defaults until the tenant
+# sets the input, and the connector role's read of it (IH-156).
+ADDED: Set[str] = {
+    "module.connector.aws_ssm_parameter.tenant_settings",
+    "module.connector.aws_iam_role_policy.connector_tenant_settings",
+}
 # What the plan updates in place, and which of their attributes: nothing, an accept rule's parameter included.
 # At a release, the connector role's module_version tag changes, and the test checks it apart.
 UPDATED: Dict[str, List[str]] = {}
@@ -62,6 +70,8 @@ THREAT_RULES = [THREAT_RULE, EXCEPTION_RULE]
 VULN_RULES = [
     VULN_CVE_RULE,
     VULN_PACKAGE_RULE,
+    VULN_CVES_IN_PACKAGE_RULE,
+    VULN_CVES_IN_VERSION_RULE,
     rule_of_length(STANDARD_PARAMETER_LIMIT, tail="q\u0301\U0001f600"),
 ]
 
@@ -122,10 +132,11 @@ def test_upgrade_from_previous_release(
     registration_server,
 ):
     """
-    Changing the version changes nothing but, at a release, the connector role's module_version tag. Each
-    accept rule's parameter keeps its bytes and its version, nothing is created or replaced, the forwarding
-    rule and the forwarder role's trust policy stay as they were, the connector doesn't register again, and
-    the next plan is empty.
+    Changing the version creates the tenant's settings' parameter, holding LoopProof's defaults, and the
+    connector role's read of it, and changes nothing else but, at a release, the connector role's module_version
+    tag. Each accept rule's parameter keeps its bytes and its version, nothing is replaced, the forwarding rule
+    and the forwarder role's trust policy stay as they were, the connector doesn't register again, and the next
+    plan is empty.
     """
     write_terraform_tf(UPGRADE_ROOT, aws_provider_version)
     write_tfvars(
@@ -232,6 +243,13 @@ def test_upgrade_from_previous_release(
             )
             # The same values at the same versions, last modified when the previous release wrote them.
             assert accept_rules_by_path(ssm_client) == rules_before
+            # A tenant that hasn't set the new input publishes LoopProof's defaults, which change nothing.
+            assert (
+                ssm_client.get_parameter(Name=TENANT_SETTINGS_PARAMETER)["Parameter"][
+                    "Value"
+                ]
+                == DEFAULT_TENANT_SETTINGS_JSON
+            )
             result = terraform(
                 UPGRADE_ROOT, "plan", "-input=false", "-detailed-exitcode"
             )
