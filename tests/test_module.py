@@ -25,6 +25,7 @@ from tests.conftest import (
     REGISTRATION_TOKEN_PARAMETER,
     REPOSITORY_TAG,
     SEVERITY_FILTERED_PRODUCTS,
+    TENANT_SETTINGS_PARAMETER,
     TEST_ENVIRONMENT,
     ConnectorProbe,
     accept_rules_by_path,
@@ -334,14 +335,23 @@ def test_connector_permissions_simulated(
             f"{ACCEPT_RULES_PATH}/vpn-port-probes",
             "implicitDeny",
         ),
+        # The tenant's settings: the one parameter, by name, and nothing more.
+        ("ssm:GetParameter", TENANT_SETTINGS_PARAMETER, "allowed"),
+        ("ssm:GetParameters", TENANT_SETTINGS_PARAMETER, "implicitDeny"),
+        ("ssm:GetParameterHistory", TENANT_SETTINGS_PARAMETER, "implicitDeny"),
+        ("ssm:GetParameter", f"{TENANT_SETTINGS_PARAMETER}-old", "implicitDeny"),
+        ("ssm:PutParameter", TENANT_SETTINGS_PARAMETER, "implicitDeny"),
+        ("ssm:DeleteParameter", TENANT_SETTINGS_PARAMETER, "implicitDeny"),
+        ("ssm:AddTagsToResource", TENANT_SETTINGS_PARAMETER, "implicitDeny"),
+        ("ssm:LabelParameterVersion", TENANT_SETTINGS_PARAMETER, "implicitDeny"),
     ],
 )
 def test_connector_ssm_simulated(
     connector, iam_client, aws_region, action, name, decision
 ):
     """
-    In SSM, the IAM policy simulator lets the connector role only read the excluded accounts' parameter
-    and the accept rules.
+    In SSM, the IAM policy simulator lets the connector role only read the excluded accounts' parameter,
+    the accept rules and the tenant's settings.
     """
     account_id = connector["outputs"]["event_bus_arn"].split(":")[4]
     # A hierarchical parameter's name starts with "/", which its ARN doesn't repeat.
