@@ -41,3 +41,22 @@ resource "aws_ssm_parameter" "accept_rules" {
     }
   }
 }
+
+# The tenant's settings (IH-156), for LoopProof to read with the connector role every 15 minutes. It always holds
+# every setting, LoopProof's defaults when the tenant sets none, so that LoopProof can tell a tenant on the defaults
+# from a connector too old to say. One Standard parameter holds them: the value is a few hundred characters.
+resource "aws_ssm_parameter" "tenant_settings" {
+  # checkov:skip=CKV2_AWS_34:The settings aren't secret, and a String parameter needs no KMS grant to read.
+  name = local.tenant_settings_parameter_name
+  description = join(" ", [
+    "Settings of the tenant in LoopProof ${var.environment}:",
+    "SLA targets, thresholds, quiet window, ticket budget and review due.",
+  ])
+  type = "String"
+  # Without a tier, the provider uses the Region's default, which the account may have set to Advanced.
+  tier = "Standard"
+  # The settings aren't secret, and the plan of a change to them, which the tenant's pull request approves,
+  # should show it.
+  insecure_value = jsonencode(local.tenant_settings)
+  tags           = local.tags
+}

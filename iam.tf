@@ -150,6 +150,22 @@ resource "aws_iam_role_policy" "connector_accept_rules" {
   policy = data.aws_iam_policy_document.connector_accept_rules.json
 }
 
+# LoopProof reads the tenant's settings with the connector role (IH-156): the one parameter, by name, and nothing
+# else. It is a String parameter, whose read needs no KMS permission.
+data "aws_iam_policy_document" "connector_tenant_settings" {
+  statement {
+    sid       = "ReadTenantSettings"
+    actions   = ["ssm:GetParameter"]
+    resources = [aws_ssm_parameter.tenant_settings.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "connector_tenant_settings" {
+  name   = "tenant-settings-parameter"
+  role   = aws_iam_role.connector.id
+  policy = data.aws_iam_policy_document.connector_tenant_settings.json
+}
+
 # Resource tags. Where a finding's resource carries no tags, LoopProof derives them from a related resource:
 # an ECR image's from its repository, which neither Inspector's nor Security Hub's finding carries.
 

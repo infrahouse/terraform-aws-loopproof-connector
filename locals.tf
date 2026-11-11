@@ -12,6 +12,7 @@ locals {
   rule_name                        = "loopproof-${var.environment}-findings"
   excluded_accounts_parameter_name = "/loopproof/${var.environment}/excluded-accounts"
   accept_rules_parameter_path      = "/loopproof/${var.environment}/accept-rules"
+  tenant_settings_parameter_name   = "/loopproof/${var.environment}/tenant-settings"
   # A hierarchical parameter's name starts with "/", which its ARN doesn't repeat. The parameters are in the
   # module's Region, as the excluded accounts' is.
   accept_rules_path_arn = join("", [
@@ -124,6 +125,74 @@ locals {
   accept_rule_lengths = {
     for id, value in local.accept_rules : id => (
       length(regexall("(?s).", value)) + length(regexall("[\\x{10000}-\\x{10FFFF}]", value))
+    )
+  }
+
+  # The tenant's settings (IH-156). LoopProof's defaults, DEFAULTS in infrahouse/loopproof's
+  # src/loopproof/core/tenant_settings.py, in whole days: what the module publishes for a setting the tenant leaves
+  # out. A setting left out is published as the default it has in the tenant's release of the module, not read as
+  # "LoopProof's current default", so that a change to a default reaches a tenant only by its own pull request.
+  tenant_settings_defaults = {
+    sla_target_days = {
+      threat_response  = { critical = 7, high = 14, medium = 30, low = 90 }
+      vuln_remediation = { critical = 7, high = 14, medium = 30, low = 90 }
+    }
+    thresholds = {
+      threat_response  = "High"
+      vuln_remediation = "High"
+    }
+    quiet_window_days      = 14
+    ticket_budget_per_hour = 20
+    review_due_before_days = 14
+  }
+  # The names the input's checks know, the kinds as LoopProof names them, as an accept rule's kind is, and the
+  # severities in order, the most severe first: critical's target is Fatal's too.
+  tenant_setting_names       = keys(local.tenant_settings_defaults)
+  tenant_settings_kinds      = ["threat_response", "vuln_remediation"]
+  tenant_settings_severities = ["critical", "high", "medium", "low"]
+  # The thresholds LoopProof's table allows, by kind, as the input writes them: OCSF's captions, which LoopProof
+  # stores as their severity_id (High 4, Medium 3).
+  tenant_settings_thresholds = {
+    threat_response  = ["High", "Medium"]
+    vuln_remediation = ["High"]
+  }
+  # The bounds above LoopProof's own, which are above zero, zero or more for the quiet window, and 1 or more for
+  # the budget. Ten years catches a digit too many and keeps LoopProof's due dates far from Python's year 9999,
+  # and no team files ten thousand tickets an hour.
+  tenant_settings_max_days   = 3650
+  tenant_settings_max_budget = 10000
+
+  # Every setting, the tenant's or LoopProof's default, as LoopProof reads it: jsonencode sorts the keys at every
+  # level, and a whole number, written as 14, "14" or 14.0, is always written 14, so the same settings are always
+  # the same bytes, which LoopProof numbers its versions by. A setting set to null is left out. The input's checks
+  # have refused every other name and every value LoopProof's table refuses.
+  tenant_settings = {
+    sla_target_days = {
+      for kind, targets in local.tenant_settings_defaults.sla_target_days : kind => {
+        for severity, days in targets : severity => (
+          try(var.tenant_settings.sla_target_days[kind][severity], null) == null
+          ? days : tonumber(var.tenant_settings.sla_target_days[kind][severity])
+        )
+      }
+    }
+    thresholds = {
+      for kind, threshold in local.tenant_settings_defaults.thresholds : kind => (
+        try(var.tenant_settings.thresholds[kind], null) == null
+        ? threshold : tostring(var.tenant_settings.thresholds[kind])
+      )
+    }
+    # abs(): a quiet window of -0, which the checks let through as zero, would otherwise be written -0.
+    quiet_window_days = (
+      try(var.tenant_settings.quiet_window_days, null) == null
+      ? local.tenant_settings_defaults.quiet_window_days : abs(tonumber(var.tenant_settings.quiet_window_days))
+    )
+    ticket_budget_per_hour = (
+      try(var.tenant_settings.ticket_budget_per_hour, null) == null
+      ? local.tenant_settings_defaults.ticket_budget_per_hour : tonumber(var.tenant_settings.ticket_budget_per_hour)
+    )
+    review_due_before_days = (
+      try(var.tenant_settings.review_due_before_days, null) == null
+      ? local.tenant_settings_defaults.review_due_before_days : tonumber(var.tenant_settings.review_due_before_days)
     )
   }
 

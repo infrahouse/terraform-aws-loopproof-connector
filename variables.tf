@@ -877,3 +877,255 @@ variable "vulnerability_accept_rules" {
     ])
   }
 }
+
+variable "tenant_settings" {
+  # Any shape, not an object type: Terraform drops an attribute an object type doesn't name, without an error, so
+  # a misspelled setting would publish LoopProof's default in its place, a change of policy nobody wrote. The
+  # checks below refuse any name the module doesn't know, at every level, and any value LoopProof's table refuses.
+  # The names, the bounds and LoopProof's defaults are in locals.tf.
+  type        = any
+  description = <<-EOT
+    Your settings in LoopProof, as your security policy states them: sla_target_days, the days from a work item's
+    start to its due date, by kind (threat_response, vuln_remediation) and severity (critical, which covers Fatal,
+    high, medium, low); thresholds, by kind, the lowest severity that opens a work item ("High" or "Medium" for
+    threat_response, "High" for vuln_remediation); quiet_window_days, how long after a work item closes a returning
+    finding reopens it rather than open a new one; ticket_budget_per_hour, how many tickets LoopProof files in any
+    hour; and review_due_before_days, how long before an accept rule's review_by date it is due for review. A
+    setting left out is LoopProof's default: SLA targets of 7, 14, 30 and 90 days for both kinds, both thresholds
+    "High", a quiet window of 14 days, 20 tickets an hour, and review due 14 days before. Days are whole days, and
+    no SLA target may be longer than a less severe one's. The module refuses a setting it doesn't know, such as a
+    misspelled one, and publishes every setting as JSON in the SSM parameter /loopproof/<environment>/tenant-settings,
+    where LoopProof reads it with the connector role within 15 minutes and records each change as a version. A
+    change applies to work items that open after LoopProof reads it. See "Your settings in LoopProof" in the README.
+  EOT
+  default     = {}
+  nullable    = false
+
+  # Each message names the input and the settings it refuses. A check that finds what an earlier one refuses, such
+  # as an attribute of something that isn't an object, passes, so that each mistake gets one message.
+  validation {
+    condition     = can(keys(var.tenant_settings))
+    error_message = "tenant_settings must be an object of settings."
+  }
+
+  validation {
+    condition = length([
+      for path, value in {
+        "sla_target_days"                  = try(var.tenant_settings.sla_target_days, null)
+        "sla_target_days.threat_response"  = try(var.tenant_settings.sla_target_days.threat_response, null)
+        "sla_target_days.vuln_remediation" = try(var.tenant_settings.sla_target_days.vuln_remediation, null)
+        "thresholds"                       = try(var.tenant_settings.thresholds, null)
+      } : path if value == null ? false : !can(keys(value))
+    ]) == 0
+    error_message = join("", [
+      "tenant_settings: sla_target_days, each kind in it, and thresholds must be objects. Settings: ",
+      join(", ", [
+        for path, value in {
+          "sla_target_days"                  = try(var.tenant_settings.sla_target_days, null)
+          "sla_target_days.threat_response"  = try(var.tenant_settings.sla_target_days.threat_response, null)
+          "sla_target_days.vuln_remediation" = try(var.tenant_settings.sla_target_days.vuln_remediation, null)
+          "thresholds"                       = try(var.tenant_settings.thresholds, null)
+        } : path if value == null ? false : !can(keys(value))
+      ]),
+      ".",
+    ])
+  }
+
+  # A misspelled setting is refused, never published as LoopProof's default.
+  validation {
+    condition = length(concat(
+      [for name in try(keys(var.tenant_settings), []) : name if !contains(local.tenant_setting_names, name)],
+      [
+        for kind in try(keys(var.tenant_settings.sla_target_days), []) : kind
+        if !contains(local.tenant_settings_kinds, kind)
+      ],
+      flatten([
+        for kind in local.tenant_settings_kinds : [
+          for severity in try(keys(var.tenant_settings.sla_target_days[kind]), []) : severity
+          if !contains(local.tenant_settings_severities, severity)
+        ]
+      ]),
+      [
+        for kind in try(keys(var.tenant_settings.thresholds), []) : kind
+        if !contains(local.tenant_settings_kinds, kind)
+      ],
+    )) == 0
+    error_message = join("", [
+      "tenant_settings: unknown setting. The settings are sla_target_days.<kind>.<severity>, thresholds.<kind>, ",
+      "quiet_window_days, ticket_budget_per_hour and review_due_before_days, where a kind is threat_response or ",
+      "vuln_remediation, and a severity critical, high, medium or low, critical covering Fatal. Settings: ",
+      join(", ", sort(concat(
+        [for name in try(keys(var.tenant_settings), []) : name if !contains(local.tenant_setting_names, name)],
+        [
+          for kind in try(keys(var.tenant_settings.sla_target_days), []) : "sla_target_days.${kind}"
+          if !contains(local.tenant_settings_kinds, kind)
+        ],
+        flatten([
+          for kind in local.tenant_settings_kinds : [
+            for severity in try(keys(var.tenant_settings.sla_target_days[kind]), []) :
+            "sla_target_days.${kind}.${severity}" if !contains(local.tenant_settings_severities, severity)
+          ]
+        ]),
+        [
+          for kind in try(keys(var.tenant_settings.thresholds), []) : "thresholds.${kind}"
+          if !contains(local.tenant_settings_kinds, kind)
+        ],
+      ))),
+      ".",
+    ])
+  }
+
+  # Whole days: a tenant's policy states its targets in days, and a whole number of days is a whole number of
+  # hours, the unit of LoopProof's grace windows, which it compares with the targets.
+  validation {
+    condition = length(flatten([
+      for kind in local.tenant_settings_kinds : [
+        for index, days in [
+          for severity in local.tenant_settings_severities :
+          try(var.tenant_settings.sla_target_days[kind][severity], null)
+          ] : index if days == null ? false : !try(
+          floor(tonumber(days)) == tonumber(days)
+          && tonumber(days) >= 1 && tonumber(days) <= local.tenant_settings_max_days,
+          false
+        )
+      ]
+    ])) == 0
+    error_message = join("", [
+      "tenant_settings: an SLA target must be a whole number of days from 1 to ${local.tenant_settings_max_days}. ",
+      "Settings: ",
+      join(", ", flatten([
+        for kind in local.tenant_settings_kinds : [
+          for index, days in [
+            for severity in local.tenant_settings_severities :
+            try(var.tenant_settings.sla_target_days[kind][severity], null)
+            ] : "sla_target_days.${kind}.${local.tenant_settings_severities[index]}" if days == null ? false : !try(
+            floor(tonumber(days)) == tonumber(days)
+            && tonumber(days) >= 1 && tonumber(days) <= local.tenant_settings_max_days,
+            false
+          )
+        ]
+      ])),
+      ".",
+    ])
+  }
+
+  # No more severe finding gets longer than a less severe one, counting LoopProof's default for a target left
+  # out: a policy that does has two targets swapped. Equal targets are allowed. A kind with a target the check
+  # above refuses (null here) is left to it.
+  validation {
+    condition = alltrue([
+      for kind, targets in {
+        for kind in local.tenant_settings_kinds : kind => [
+          for index, days in [
+            for severity in local.tenant_settings_severities :
+            try(var.tenant_settings.sla_target_days[kind][severity], null)
+            ] : days == null ? local.tenant_settings_defaults.sla_target_days[kind][
+            local.tenant_settings_severities[index]
+            ] : try(
+            floor(tonumber(days)) == tonumber(days)
+            && tonumber(days) >= 1 && tonumber(days) <= local.tenant_settings_max_days ? tonumber(days) : null,
+            null
+          )
+        ]
+        } : anytrue([for days in targets : days == null]) ? true : alltrue([
+          for index in range(length(targets) - 1) : targets[index] <= targets[index + 1]
+      ])
+    ])
+    error_message = join("", [
+      "tenant_settings: an SLA target must not be longer than a less severe one's, counting LoopProof's default ",
+      "for a target left out. Settings: ",
+      join(", ", [
+        for kind, targets in {
+          for kind in local.tenant_settings_kinds : kind => [
+            for index, days in [
+              for severity in local.tenant_settings_severities :
+              try(var.tenant_settings.sla_target_days[kind][severity], null)
+              ] : days == null ? local.tenant_settings_defaults.sla_target_days[kind][
+              local.tenant_settings_severities[index]
+              ] : try(
+              floor(tonumber(days)) == tonumber(days)
+              && tonumber(days) >= 1 && tonumber(days) <= local.tenant_settings_max_days ? tonumber(days) : null,
+              null
+            )
+          ]
+          } : join("", [
+            "sla_target_days.${kind} (",
+            join(", ", [
+              for index, days in targets : "${local.tenant_settings_severities[index]} ${days}"
+            ]),
+            ")",
+            ]) if anytrue([for days in targets : days == null]) ? false : !alltrue([
+            for index in range(length(targets) - 1) : targets[index] <= targets[index + 1]
+        ])
+      ]),
+      ".",
+    ])
+  }
+
+  # LoopProof's table allows these alone (Aleks, 2026-10-27): threats from High, or from Medium, since the
+  # connector forwards GuardDuty's findings at every severity; vulnerabilities from High.
+  validation {
+    condition = alltrue([
+      for kind, allowed in local.tenant_settings_thresholds : (
+        try(var.tenant_settings.thresholds[kind], null) == null ? true : try(
+          contains(allowed, var.tenant_settings.thresholds[kind]), false
+        )
+      )
+    ])
+    error_message = join("", [
+      "tenant_settings: a threshold must be High or Medium for threat_response, and High for vuln_remediation, ",
+      "capitalized as Security Hub writes them. Settings: ",
+      join(", ", [
+        for kind, allowed in local.tenant_settings_thresholds : "thresholds.${kind}"
+        if !(
+          try(var.tenant_settings.thresholds[kind], null) == null ? true : try(
+            contains(allowed, var.tenant_settings.thresholds[kind]), false
+          )
+        )
+      ]),
+      ".",
+    ])
+  }
+
+  validation {
+    condition = alltrue([
+      for value in [try(var.tenant_settings.quiet_window_days, null)] : value == null ? true : try(
+        floor(tonumber(value)) == tonumber(value)
+        && tonumber(value) >= 0 && tonumber(value) <= local.tenant_settings_max_days,
+        false
+      )
+    ])
+    error_message = join("", [
+      "tenant_settings: quiet_window_days must be a whole number of days from 0 to ",
+      "${local.tenant_settings_max_days}.",
+    ])
+  }
+
+  validation {
+    condition = alltrue([
+      for value in [try(var.tenant_settings.ticket_budget_per_hour, null)] : value == null ? true : try(
+        floor(tonumber(value)) == tonumber(value)
+        && tonumber(value) >= 1 && tonumber(value) <= local.tenant_settings_max_budget,
+        false
+      )
+    ])
+    error_message = join("", [
+      "tenant_settings: ticket_budget_per_hour must be a whole number from 1 to ",
+      "${local.tenant_settings_max_budget}.",
+    ])
+  }
+
+  validation {
+    condition = alltrue([
+      for value in [try(var.tenant_settings.review_due_before_days, null)] : value == null ? true : try(
+        floor(tonumber(value)) == tonumber(value)
+        && tonumber(value) >= 1 && tonumber(value) <= local.tenant_settings_max_days,
+        false
+      )
+    ])
+    error_message = join("", [
+      "tenant_settings: review_due_before_days must be a whole number of days from 1 to ",
+      "${local.tenant_settings_max_days}.",
+    ])
+  }
+}
