@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-11-12
+
+### Documentation
+
+- The tenant's settings, and what to know before changing one (IH-156)
+- The tenant's settings parameter, its contract and its tests (IH-156)
+- The basic example takes tenant_settings (IH-156, review 1)
+
+### Features
+
+- Publish the tenant's settings for LoopProof to read (IH-156)
+
+### Testing
+
+- The tenant's settings in one input, checked and published (IH-156)
+- The connector role may only GetParameter the settings (IH-156)
+
 ## [1.4.0] - 2026-11-08
 
 ### Documentation
